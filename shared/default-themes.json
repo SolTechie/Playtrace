@@ -1,0 +1,59 @@
+[
+  {
+    "version": 1,
+    "layout": "timeline",
+    "sort": "recent",
+    "is_published": true,
+    "id": "ea921b49-0749-4192-aefd-a66c382a1001",
+    "title": "轨迹里的那些年",
+    "description": "从利贝尔到克洛斯贝尔，故事延续，冒险未完。",
+    "filters": {
+      "title_keywords": ["英雄传说"],
+      "tags": [],
+      "platforms": [],
+      "statuses": [],
+      "years": [],
+      "developers": [],
+      "series": []
+    },
+    "chart": "year"
+  },
+  {
+    "version": 1,
+    "layout": "gallery",
+    "sort": "hours",
+    "is_published": true,
+    "id": "ea921b49-0749-4192-aefd-a66c382a1002",
+    "title": "再来一局",
+    "description": "走出地牢之前，总还有下一次尝试。",
+    "filters": {
+      "title_keywords": [],
+      "tags": ["Roguelike", "Roguelite"],
+      "platforms": [],
+      "statuses": [],
+      "years": [],
+      "developers": [],
+      "series": []
+    },
+    "chart": "genre"
+  },
+  {
+    "version": 1,
+    "layout": "gallery",
+    "sort": "recent",
+    "is_published": true,
+    "id": "ea921b49-0749-4192-aefd-a66c382a1003",
+    "title": "一起闯关的日子",
+    "description": "两个人的默契，和一起通关的快乐。",
+    "filters": {
+      "title_keywords": [],
+      "tags": ["Co-op"],
+      "platforms": [],
+      "statuses": [],
+      "years": [],
+      "developers": [],
+      "series": []
+    },
+    "chart": "platform"
+  }
+]

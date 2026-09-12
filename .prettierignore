@@ -1,0 +1,11 @@
+node_modules
+dist
+resource
+data
+public/game-images
+public/dev-data
+.wrangler
+.bridge
+package-lock.json
+.env*
+.dev.vars*
