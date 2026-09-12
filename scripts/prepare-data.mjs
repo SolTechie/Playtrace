@@ -50,7 +50,6 @@ for (const folder of folders.filter((x) => x.isDirectory())) {
       url: `/game-images/${id}/${filename}`,
       alt: `${fields['中文名称'] || folder.name} · 图片 ${i + 1}`,
     })),
-    sources: [],
     notes: '',
     personal_rating: null,
     series: '',

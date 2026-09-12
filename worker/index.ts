@@ -6,7 +6,8 @@ import {
   requireManager,
   requireSameOrigin,
 } from './access';
-import { signImages, stableImages } from './media';
+import { signImages, stableImages, storagePath } from './media';
+import { MAX_IMAGE_BYTES, limitedBytes, rasterInfo } from '../shared/image-file';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import {
@@ -33,12 +34,18 @@ const json = (data: unknown, status = 200) =>
     status,
     headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
   });
-const entity = (row: any) => ({
-  ...row.data,
-  id: row.id,
-  version: row.version,
-  is_published: row.is_published,
-});
+const entity = (row: any) => {
+  const { sources: _legacySources, ...data } = row.data;
+  return { ...data, id: row.id, version: row.version, is_published: row.is_published };
+};
+async function presentJobs(rows: any[], db: SupabaseClient, url: string) {
+  const games = rows.filter((r) => r.result?.game).map((r) => gameInputSchema.parse(r.result.game));
+  const signed = await signImages(games, db, url);
+  let index = 0;
+  return rows.map((row) =>
+    row.result?.game ? { ...row, result: { ...row.result, game: signed[index++] } } : row,
+  );
+}
 async function body(request: Request) {
   const text = await request.text();
   if (text.length > 100000) throw new HttpError(413, '内容过长');
@@ -120,6 +127,40 @@ async function bridge(request: Request, env: Env, path: string) {
       })),
     });
   }
+  const uploadJobId = path.match(/^\/api\/bridge\/jobs\/([\w-]+)\/images$/)?.[1];
+  if (uploadJobId && request.method === 'POST') {
+    const lease = z.uuid().parse(request.headers.get('X-Playtrace-Lease'));
+    const job = await ownedJob(db, uploadJobId, device.owner_id);
+    if (
+      job.kind !== 'game' ||
+      job.status !== 'running' ||
+      job.device_id !== device.id ||
+      job.lease_token !== lease ||
+      Date.parse(job.lease_until) <= Date.now()
+    )
+      throw new HttpError(409, '任务已取消或由其他设备接手');
+    let bytes: Uint8Array<ArrayBuffer>;
+    try {
+      bytes = await limitedBytes(
+        new Response(request.body, { headers: request.headers }),
+        MAX_IMAGE_BYTES,
+      );
+    } catch {
+      throw new HttpError(413, '图片超过 8 MB 或内容为空');
+    }
+    const info = rasterInfo(bytes);
+    if (!info || info.width < 250 || info.height < 200 || info.width * info.height > 40_000_000)
+      throw new HttpError(400, '请选择有效的游戏封面或截图');
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))]
+      .map((v) => v.toString(16).padStart(2, '0'))
+      .join('');
+    const name = `${device.owner_id}/ai/${uploadJobId}/${hash}.${info.ext}`;
+    const { error } = await db.storage
+      .from('game-images')
+      .upload(name, bytes, { contentType: info.type, upsert: true });
+    check(error);
+    return json({ url: `${env.SUPABASE_URL}/storage/v1/object/public/game-images/${name}` }, 201);
+  }
   const match = path.match(/^\/api\/bridge\/jobs\/([\w-]+)$/);
   if (match && request.method === 'PATCH') {
     const input = z
@@ -140,9 +181,20 @@ async function bridge(request: Request, env: Env, path: string) {
       const job = await ownedJob(db, match[1], device.owner_id);
       if (!input.result.question && !(job.kind === 'game' ? input.result.game : input.result.theme))
         throw new HttpError(422, 'AI 返回的结果类型不正确');
+      if (input.result.game) {
+        if (input.result.game.images.some((image) => !storagePath(image.url, env.SUPABASE_URL!)))
+          throw new HttpError(422, '请先将 AI 图片保存到游戏图片库');
+        input.result.game = stableImages(input.result.game, env.SUPABASE_URL!);
+      }
       updates.result = input.result;
       updates.status = input.result.question ? 'needs_input' : 'ready';
-      updates.progress = input.result.question ? '需要补充信息' : '资料已整理好，等待保存';
+      updates.progress = input.result.question
+        ? '需要补充信息'
+        : input.result.game
+          ? input.result.game.images.length
+            ? `资料和 ${input.result.game.images.length} 张图片已整理好，等待保存`
+            : '资料已整理好，暂未找到可保存的图片，可手动上传'
+          : '主题已整理好，等待保存';
       updates.lease_until = null;
     }
     if (input.error) {
@@ -331,7 +383,7 @@ export default {
             .order('created_at', { ascending: false })
             .limit(30);
           check(error);
-          return json(data || []);
+          return json(await presentJobs(data || [], db, env.SUPABASE_URL));
         }
         if (request.method === 'POST') {
           const input = jobCreateSchema.parse(await body(request));
@@ -372,7 +424,8 @@ export default {
       if (jobPath) {
         const [, id, action] = jobPath;
         const job = await ownedJob(db, id, user.id);
-        if (!action && request.method === 'GET') return json(job);
+        if (!action && request.method === 'GET')
+          return json((await presentJobs([job], db, env.SUPABASE_URL))[0]);
         if (action === 'events' && request.method === 'GET') {
           const { data, error } = await db
             .from('ai_job_events')

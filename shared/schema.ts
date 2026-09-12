@@ -15,12 +15,6 @@ const imageUrl = z
       /^\/game-images\/[a-z0-9-]+\/image_\d+\.(jpg|jpeg|png|webp)$/i.test(v),
     '图片链接无效',
   );
-export const sourceSchema = z.object({
-  field: text(80),
-  url: httpUrl,
-  title: text(300),
-  checked_at: z.string().max(40).optional(),
-});
 export const gameInputSchema = z.object({
   title: text().min(1, '请输入游戏名称'),
   english_title: text().default(''),
@@ -42,7 +36,6 @@ export const gameInputSchema = z.object({
     .array(z.object({ url: imageUrl, alt: text(300) }))
     .max(12)
     .default([]),
-  sources: z.array(sourceSchema).max(50).default([]),
   notes: text(10000).default(''),
   personal_rating: z.number().min(0).max(10).nullable().default(null),
   series: text().default(''),

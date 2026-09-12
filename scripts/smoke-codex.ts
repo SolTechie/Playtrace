@@ -12,7 +12,7 @@ await writeFile('.bridge/smoke-result.json', JSON.stringify(result, null, 2));
 console.log(
   JSON.stringify({
     title: result.game?.title,
-    sources: result.game?.sources.length,
+    imageCandidates: result.game?.images.length,
     hours: result.game?.hours,
     years: result.game?.played_years,
     status: result.game?.status,

@@ -649,22 +649,6 @@ function DetailPage() {
               </div>
             </section>
           )}
-          {g.sources.length > 0 && (
-            <section className="panel">
-              <h3>资料来源</h3>
-              <div className="source-list">
-                {g.sources.map((s, i) => (
-                  <a key={i} href={s.url} target="_blank" rel="noreferrer">
-                    <span>
-                      {s.field} · {s.title}
-                      {s.checked_at && <small>{s.checked_at.slice(0, 10)}</small>}
-                    </span>
-                    <ExternalLink size={15} />
-                  </a>
-                ))}
-              </div>
-            </section>
-          )}
         </div>
         <aside>
           <section className="panel">
@@ -718,12 +702,7 @@ function DetailPage() {
             ) : (
               <p className="muted">暂未收录评分</p>
             )}
-            <p className="data-note">
-              各平台分别计分 · 满分 100
-              {!g.sources.some((s) => /评分|meta|mc/i.test(s.field))
-                ? ' · 来自原始记录，未记录查询时间'
-                : ''}
-            </p>
+            <p className="data-note">各平台分别计分 · 满分 100</p>
           </section>
         </aside>
       </div>

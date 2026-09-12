@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { Plus, Save, X, Upload, LoaderCircle, ExternalLink } from 'lucide-react';
+import { Plus, Save, X, Upload, LoaderCircle } from 'lucide-react';
 import { gameInputSchema, statuses, type GameInput } from '../../shared/schema';
 import { api } from '../lib/api';
 
@@ -368,21 +368,6 @@ export default function GameForm({
           )}
         </div>
       </section>
-      {form.sources.length > 0 && (
-        <section className="form-section">
-          <h3>资料来源</h3>
-          <div className="source-list">
-            {form.sources.map((s, i) => (
-              <a href={s.url} key={i} target="_blank" rel="noreferrer">
-                <span>
-                  {s.field} · {s.title || s.url}
-                </span>
-                <ExternalLink size={14} />
-              </a>
-            ))}
-          </div>
-        </section>
-      )}
       {error && (
         <p className="error-message" role="alert">
           {error}

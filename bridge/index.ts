@@ -1,5 +1,6 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { findCodex, runCodex } from './codex';
+import { collectGameImages } from './images';
 import type { Job } from '../shared/schema';
 
 const base = process.env.GAME_API_URL?.replace(/\/$/, ''),
@@ -96,6 +97,28 @@ while (!stopping) {
         timeoutMs: Number(process.env.BRIDGE_TIMEOUT_MS) || 900000,
         bin,
       });
+      if (job.kind === 'game' && result.game && !result.question) {
+        result.game.images = await collectGameImages(result.game, {
+          progress: report,
+          signal: controller.signal,
+          upload: async (image) => {
+            const response = await fetch(`${base}/api/bridge/jobs/${job.id}/images`, {
+              method: 'POST',
+              headers: {
+                Authorization: `Bearer ${token}`,
+                'Content-Type': image.type,
+                'X-Playtrace-Lease': job.lease_token!,
+              },
+              body: new Blob([new Uint8Array(image.bytes)], { type: image.type }),
+              signal: AbortSignal.any([controller.signal, AbortSignal.timeout(30000)]),
+            });
+            const data = (await response.json()) as { url?: string; error?: string };
+            if (!response.ok || !data.url)
+              throw new ApiError(response.status, data.error || '图片保存失败，请重试');
+            return data.url;
+          },
+        });
+      }
       await updates;
       await update({ result });
       console.log(result.question ? '等待用户补充信息' : '草稿已回传到网页');
