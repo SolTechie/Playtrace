@@ -44,7 +44,7 @@ import {
   Settings2,
   LoaderCircle,
 } from 'lucide-react';
-import { api, configure, loadSeedGames, supabase } from './lib/api';
+import { api, configure, loadSeedGames, enterManagement, leaveManagement } from './lib/api';
 import {
   filterGames,
   sortGames,
@@ -110,13 +110,17 @@ export default function App() {
           };
           const imageRefresh = setInterval(refreshVisible, 600000);
           document.addEventListener('visibilitychange', refreshVisible);
-          const listener = supabase!.auth.onAuthStateChange(() => {
-            void refresh().catch((e) => setError(e.message));
-          });
+          window.addEventListener('playtrace:access', refreshVisible);
+          const channel =
+            typeof BroadcastChannel !== 'undefined'
+              ? new BroadcastChannel('playtrace-access')
+              : null;
+          if (channel) channel.onmessage = refreshVisible;
           unsubscribe = () => {
             clearInterval(imageRefresh);
             document.removeEventListener('visibilitychange', refreshVisible);
-            listener.data.subscription.unsubscribe();
+            window.removeEventListener('playtrace:access', refreshVisible);
+            channel?.close();
           };
         } else {
           setGames(await loadSeedGames());
@@ -179,9 +183,13 @@ export default function App() {
               </Link>
               <button
                 className="icon-button"
-                title="退出登录"
-                aria-label="退出登录"
-                onClick={() => void supabase?.auth.signOut().then(() => setAdmin(false))}
+                title="退出管理"
+                aria-label="退出管理"
+                onClick={() =>
+                  void leaveManagement()
+                    .then(refresh)
+                    .catch((e) => setToast(e.message))
+                }
               >
                 <LogOut size={17} />
               </button>
@@ -241,19 +249,18 @@ export default function App() {
             </button>
           </div>
         )}
-        {login && <LoginModal onClose={() => setLogin(false)} />}
+        {login && <InviteModal onClose={() => setLogin(false)} />}
       </div>
     </Context.Provider>
   );
 }
-function LoginModal({ onClose }: { onClose: () => void }) {
-  const { configured, refresh } = useStore();
-  const [email, setEmail] = useState(''),
-    [password, setPassword] = useState(''),
+function InviteModal({ onClose }: { onClose: () => void }) {
+  const { configured, refresh, notify } = useStore();
+  const [code, setCode] = useState(''),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   return (
-    <Modal title="管理我的玩迹" onClose={onClose}>
+    <Modal title="输入管理邀请码" onClose={onClose}>
       {configured ? (
         <form
           className="login-form"
@@ -262,11 +269,9 @@ function LoginModal({ onClose }: { onClose: () => void }) {
             setBusy(true);
             setError('');
             try {
-              const { error } = await supabase!.auth.signInWithPassword({ email, password });
-              if (error) throw error;
-              const me = await api<{ admin: boolean }>('/me');
-              if (!me.admin) throw new Error('这个账号没有管理权限');
+              await enterManagement(code);
               await refresh();
+              notify('已进入管理模式');
               onClose();
             } catch (e) {
               setError((e as Error).message);
@@ -275,25 +280,21 @@ function LoginModal({ onClose }: { onClose: () => void }) {
             }
           }}
         >
-          <p className="muted">登录后可以编辑游戏、使用 AI 添加资料和创建主题。</p>
+          <p className="muted">输入邀请码后，可以编辑游戏、添加 AI 资料和创建主题。</p>
           <label>
-            邮箱
-            <input
-              type="email"
-              required
-              autoComplete="username"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label>
-            密码
+            数字邀请码
             <input
               type="password"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{12}"
+              minLength={12}
+              maxLength={12}
               required
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              autoFocus
+              placeholder="输入 12 位数字"
+              value={code}
+              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
             />
           </label>
           {error && (
@@ -301,15 +302,13 @@ function LoginModal({ onClose }: { onClose: () => void }) {
               {error}
             </p>
           )}
-          <button disabled={busy} className="button primary">
-            {busy ? <LoaderCircle size={18} className="spin" /> : <LogIn size={18} />}登录
+          <button disabled={busy || code.length !== 12} className="button primary">
+            {busy ? <LoaderCircle size={18} className="spin" /> : <LogIn size={18} />}进入管理模式
           </button>
         </form>
       ) : (
         <div className="setup-message">
-          <p>
-            当前是用本地资料生成的预览。连接 Supabase 后，即可启用账号、云端保存和 AI 管理功能。
-          </p>
+          <p>当前是本地预览。连接云端并配置邀请码后，即可保存和管理游戏。</p>
           <Link className="button primary" to="/studio" onClick={onClose}>
             <Sparkles size={16} />
             查看 AI 工作台
@@ -797,9 +796,9 @@ function EditorPage() {
   const g = games.find((g) => g.id === id);
   if (configured && !admin)
     return (
-      <Empty title="登录后管理游戏">
+      <Empty title="输入邀请码后管理游戏">
         <button className="button primary" onClick={login}>
-          管理员登录
+          输入邀请码
         </button>
       </Empty>
     );

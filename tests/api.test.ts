@@ -25,8 +25,9 @@ describe('public API boundaries', () => {
     const response = await worker.fetch(new Request('https://playtrace.test/api/me'), {
       SUPABASE_URL: 'https://example.supabase.co',
       SUPABASE_PUBLISHABLE_KEY: 'public',
+      SUPABASE_SERVICE_ROLE_KEY: 'server',
     });
-    expect(await response.json()).toEqual({ admin: false });
+    expect(await response.json()).toEqual({ admin: false, expiresAt: null });
   });
   it('rejects malformed device credentials before any database query', async () => {
     const response = await worker.fetch(
@@ -34,7 +35,11 @@ describe('public API boundaries', () => {
         method: 'POST',
         headers: { Authorization: 'Bearer bad' },
       }),
-      { SUPABASE_URL: 'https://example.supabase.co', SUPABASE_PUBLISHABLE_KEY: 'public' },
+      {
+        SUPABASE_URL: 'https://example.supabase.co',
+        SUPABASE_PUBLISHABLE_KEY: 'public',
+        SUPABASE_SERVICE_ROLE_KEY: 'server',
+      },
     );
     expect(response.status).toBe(401);
   });

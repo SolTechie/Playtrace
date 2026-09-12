@@ -1,3 +1,11 @@
+import {
+  AccessError,
+  verifyInvite,
+  exitManagement,
+  resolveManager,
+  requireManager,
+  requireSameOrigin,
+} from './access';
 import { signImages, stableImages } from './media';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
@@ -10,7 +18,6 @@ import {
 
 type Env = {
   SUPABASE_URL?: string;
-  SUPABASE_PUBLISHABLE_KEY?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
 };
 class HttpError extends Error {
@@ -48,15 +55,6 @@ function check(error: any) {
     throw new HttpError(500, '数据操作失败，请检查服务配置或稍后重试');
   }
 }
-async function admin(db: SupabaseClient) {
-  const {
-    data: { user },
-  } = await db.auth.getUser();
-  if (!user) throw new HttpError(401, '请先登录管理账号');
-  const { data, error } = await db.rpc('is_admin');
-  if (error || !data) throw new HttpError(403, '这个账号没有管理权限');
-  return user;
-}
 function service(env: Env) {
   if (!env.SUPABASE_SERVICE_ROLE_KEY) throw new HttpError(503, 'AI 服务尚未配置');
   return createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY, {
@@ -87,11 +85,11 @@ async function bridge(request: Request, env: Env, path: string) {
   check(error);
   if (!device) throw new HttpError(401, '设备凭证无效或已撤销');
   const { data: owner } = await db
-    .from('admin_users')
-    .select('user_id')
-    .eq('user_id', device.owner_id)
+    .from('archive_managers')
+    .select('id')
+    .eq('id', device.owner_id)
     .maybeSingle();
-  if (!owner) throw new HttpError(403, '设备所属账号没有管理权限');
+  if (!owner) throw new HttpError(403, '设备没有管理权限');
   await db
     .from('agent_devices')
     .update({ last_seen_at: new Date().toISOString() })
@@ -178,30 +176,32 @@ export default {
       const path = url.pathname;
       if (path === '/api/config')
         return json({
-          configured: !!(env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY),
-          url: env.SUPABASE_URL || null,
-          key: env.SUPABASE_PUBLISHABLE_KEY || null,
+          configured: !!(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+          access: 'invite',
         });
       if (path === '/api/health')
-        return json({ ok: true, configured: !!(env.SUPABASE_URL && env.SUPABASE_PUBLISHABLE_KEY) });
-      if (!env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY)
+        return json({
+          ok: true,
+          configured: !!(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
+        });
+      if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY)
         throw new HttpError(503, '云端尚未连接，当前为本地浏览预览');
       if (path.startsWith('/api/bridge/')) return await bridge(request, env, path);
-      const authorization = request.headers.get('Authorization') || '';
-      const db = createClient(env.SUPABASE_URL, env.SUPABASE_PUBLISHABLE_KEY, {
-        global: { headers: authorization ? { Authorization: authorization } : {} },
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      if (path === '/api/me') {
-        if (!authorization) return json({ admin: false });
-        const user = await admin(db);
-        return json({ admin: true, email: user.email });
-      }
+      const db = service(env);
+      if (path === '/api/access/verify' && request.method === 'POST')
+        return await verifyInvite(request, db);
+      if (path === '/api/access/exit' && request.method === 'POST')
+        return await exitManagement(request, db);
+      if (!['GET', 'HEAD'].includes(request.method)) requireSameOrigin(request);
+      const manager = await resolveManager(request, db);
+      if (path === '/api/me')
+        return json({ admin: !!manager, expiresAt: manager?.expiresAt || null });
       const resource = path.match(/^\/api\/(games|themes)(?:\/([\w-]+))?$/);
       if (resource) {
         const [, table, id] = resource;
         if (request.method === 'GET') {
           let q = db.from(table).select('*').is('deleted_at', null);
+          if (!manager) q = q.eq('is_published', true);
           if (id) {
             const { data, error } = await q.eq('id', id).maybeSingle();
             check(error);
@@ -219,7 +219,7 @@ export default {
             table === 'games' ? await signImages(records, service(env), env.SUPABASE_URL) : records,
           );
         }
-        await admin(db);
+        requireManager(manager);
         if (request.method === 'DELETE' && id) {
           const version = Number(url.searchParams.get('version'));
           if (!Number.isInteger(version) || version < 1)
@@ -265,7 +265,7 @@ export default {
         }
         throw new HttpError(405, '不支持的操作');
       }
-      const user = await admin(db);
+      const user = requireManager(manager);
       if (path === '/api/upload' && request.method === 'POST') {
         const form = await request.formData();
         const file = form.get('file');
@@ -327,6 +327,7 @@ export default {
           const { data, error } = await db
             .from('ai_jobs')
             .select('id,kind,prompt,status,progress,result,error,created_at,updated_at,attempts')
+            .eq('owner_id', user.id)
             .order('created_at', { ascending: false })
             .limit(30);
           check(error);
@@ -388,6 +389,7 @@ export default {
             const parsed = (job.kind === 'game' ? gameInputSchema : themeInputSchema).parse(raw);
             const { is_published, ...data } = parsed;
             const { data: entityId, error } = await db.rpc('save_ai_draft', {
+              p_manager_id: user.id,
               p_job_id: id,
               p_data: job.kind === 'game' ? stableImages(data, env.SUPABASE_URL) : data,
               p_published: is_published,
@@ -444,6 +446,11 @@ export default {
       }
       throw new HttpError(404, '接口不存在');
     } catch (error) {
+      if (error instanceof AccessError) {
+        const response = json({ error: error.message }, error.status);
+        if (error.retryAfter) response.headers.set('Retry-After', String(error.retryAfter));
+        return response;
+      }
       if (error instanceof z.ZodError)
         return json(
           {

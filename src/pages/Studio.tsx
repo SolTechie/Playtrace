@@ -17,7 +17,7 @@ import {
   ExternalLink,
 } from 'lucide-react';
 import { useStore } from '../App';
-import { api, supabase } from '../lib/api';
+import { api } from '../lib/api';
 import { Modal, Empty, Busy } from '../components/common';
 import GameForm from '../components/GameForm';
 import { filterGames, themeInputSchema, type Job, type ThemeInput } from '../../shared/schema';
@@ -68,15 +68,8 @@ export default function Studio() {
   useEffect(() => {
     void load();
     if (!configured || !admin) return;
-    const timer = setInterval(() => void load(), 5000);
-    const channel = supabase!
-      .channel('playtrace-ai-jobs')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ai_jobs' }, () => void load())
-      .subscribe();
-    return () => {
-      clearInterval(timer);
-      void supabase?.removeChannel(channel);
-    };
+    const timer = setInterval(() => void load(), 3000);
+    return () => clearInterval(timer);
   }, [load, configured, admin]);
   useEffect(() => {
     if (!selected) {
@@ -138,9 +131,9 @@ export default function Studio() {
   if (configured && !admin)
     return (
       <Empty title="你的 AI 工作台">
-        <p>登录管理账号，让 AI 帮你记录游戏。</p>
+        <p>输入管理邀请码，让 AI 帮你记录游戏。</p>
         <button className="button primary" onClick={login}>
-          管理员登录
+          输入邀请码
         </button>
       </Empty>
     );
@@ -164,9 +157,7 @@ export default function Studio() {
         </button>
       </div>
       {!configured && (
-        <div className="notice">
-          工作台界面已就绪。连接 Supabase 并登录管理账号后，可提交真实 AI 任务。
-        </div>
+        <div className="notice">工作台界面已就绪。连接云端并验证邀请码后，可提交真实 AI 任务。</div>
       )}
       <div className="studio-layout">
         <section className="studio-compose">

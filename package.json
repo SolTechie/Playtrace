@@ -11,7 +11,10 @@
     "test": "vitest run",
     "data:prepare": "node scripts/prepare-data.mjs",
     "data:import": "node --env-file=.env.local scripts/import-supabase.mjs",
-    "bridge": "node --env-file=.env.bridge --import tsx bridge/index.ts"
+    "bridge": "node --env-file=.env.bridge --import tsx bridge/index.ts",
+    "db:migrate": "node --env-file=.env.database scripts/migrate.mjs",
+    "invite:create": "node --env-file=.env.local scripts/create-invite.mjs",
+    "bridge:setup": "node --env-file=.env.invite scripts/setup-bridge.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

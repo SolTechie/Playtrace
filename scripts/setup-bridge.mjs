@@ -1,8 +1,7 @@
-import { createClient } from '@supabase/supabase-js';
 import { writeFile, access } from 'node:fs/promises';
 const site = new URL(process.argv[2] || '');
 if (site.protocol !== 'https:' && !['localhost', '127.0.0.1'].includes(site.hostname))
-  throw new Error('Use the trusted HTTPS URL of your own Playtrace site');
+  throw new Error('Use your own Playtrace HTTPS site URL');
 try {
   await access('.env.bridge');
   throw new Error(
@@ -11,39 +10,37 @@ try {
 } catch (error) {
   if (error.code !== 'ENOENT') throw error;
 }
-const { SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, PLAYTRACE_ADMIN_EMAIL, PLAYTRACE_ADMIN_PASSWORD } =
-  process.env;
-if (
-  !SUPABASE_URL ||
-  !SUPABASE_PUBLISHABLE_KEY ||
-  !PLAYTRACE_ADMIN_EMAIL ||
-  !PLAYTRACE_ADMIN_PASSWORD
-)
-  throw new Error('Load .env.local and .env.admin before pairing');
-const db = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
-const { data, error } = await db.auth.signInWithPassword({
-  email: PLAYTRACE_ADMIN_EMAIL,
-  password: PLAYTRACE_ADMIN_PASSWORD,
-});
-if (error) throw new Error(error.message);
-const response = await fetch(new URL('/api/agents', site), {
+const code = process.env.PLAYTRACE_INVITE_CODE;
+if (!code || !/^\d{12}$/.test(code)) throw new Error('Load .env.invite before pairing');
+const headers = { Origin: site.origin, 'Content-Type': 'application/json' };
+const response = await fetch(new URL('/api/access/verify', site), {
   method: 'POST',
-  headers: {
-    Authorization: `Bearer ${data.session.access_token}`,
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({ name: 'Playtrace local computer' }),
+  headers,
+  body: JSON.stringify({ code }),
 });
-const device = await response.json();
-if (!response.ok) throw new Error(device.error || 'Device pairing failed');
-await writeFile(
-  '.env.bridge',
-  `GAME_API_URL=${site.origin}\nGAME_DEVICE_TOKEN=${device.token}\nGAME_DEVICE_ID=${device.id}\nBRIDGE_POLL_MS=4000\nBRIDGE_TIMEOUT_MS=900000\n`,
-  { mode: 0o600, flag: 'wx' },
-);
-await db.auth.signOut({ scope: 'local' });
-console.log(
-  'Computer paired. Credentials saved in ignored .env.bridge. Start it with npm run bridge.',
-);
+if (!response.ok) throw new Error((await response.json()).error || 'Invite verification failed');
+const cookie = response.headers.get('set-cookie')?.split(';')[0];
+if (!cookie) throw new Error('No management session returned');
+try {
+  const paired = await fetch(new URL('/api/agents', site), {
+    method: 'POST',
+    headers: { ...headers, Cookie: cookie },
+    body: JSON.stringify({ name: 'Playtrace local computer' }),
+  });
+  const device = await paired.json();
+  if (!paired.ok) throw new Error(device.error || 'Pairing failed');
+  await writeFile(
+    '.env.bridge',
+    `GAME_API_URL=${site.origin}\nGAME_DEVICE_TOKEN=${device.token}\nGAME_DEVICE_ID=${device.id}\nBRIDGE_POLL_MS=4000\nBRIDGE_TIMEOUT_MS=900000\n`,
+    { mode: 0o600, flag: 'wx' },
+  );
+  console.log(
+    'Computer paired. Credentials saved in ignored .env.bridge. Start with npm run bridge.',
+  );
+} finally {
+  await fetch(new URL('/api/access/exit', site), {
+    method: 'POST',
+    headers: { ...headers, Cookie: cookie },
+    body: '{}',
+  }).catch(() => {});
+}

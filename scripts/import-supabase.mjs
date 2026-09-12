@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { readFile } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import path from 'node:path';
-const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, ADMIN_USER_ID } = process.env;
+const { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY } = process.env;
 if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY)
   throw new Error('请在 .env.local 中设置 Supabase 地址和服务端密钥。');
 const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -11,10 +11,6 @@ const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 const check = (error) => {
   if (error) throw new Error(error.message);
 };
-if (ADMIN_USER_ID) {
-  const { error } = await db.from('admin_users').upsert({ user_id: ADMIN_USER_ID });
-  check(error);
-}
 const games = JSON.parse(await readFile('data/games.json', 'utf8'));
 async function importGame(game) {
   const { data: existing, error: lookupError } = await db

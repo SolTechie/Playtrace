@@ -8,14 +8,14 @@
 
 - 游戏库：搜索、平台 / 年份 / 类型 / 开发商筛选、卡片与列表、排序。
 - 游戏详情：游玩状态、累计时长、年份、个人评分、笔记、图片、分平台 MC 评分与资料来源。
-- 管理功能：登录后新增、编辑、软删除、图片上传、公开 / 私密记录。
+- 管理功能：输入数字邀请码后新增、编辑、软删除、图片上传、公开 / 私密记录。
 - 游戏足迹：年份、平台、类型等统计；未记录时长与零小时分开处理，跨年累计时长不冒充年度时长。
 - 主题收藏：动态筛选、画廊 / 年份时间线、统计图；AI 可以生成主题草稿。
 - AI 工作台：网页提交指令、真实进度、澄清问题、审阅保存、取消、重试、设备连接管理。
 
 ## 架构
 
-React + Vite 构建响应式网页。Cloudflare Worker 提供 API，Supabase 提供 PostgreSQL、Auth、Storage、Realtime。本机 Node.js 连接服务领取队列任务，使用已登录的 Codex CLI 搜索并生成结构化草稿。
+React + Vite 构建响应式网页。Cloudflare Worker 提供 API，Supabase 提供 PostgreSQL 与 Storage。本机 Node.js 连接服务领取队列任务，使用已登录的 Codex CLI 搜索并生成结构化草稿。
 
 ```text
 浏览器 → Cloudflare Worker → Supabase
@@ -63,6 +63,6 @@ npm run build
 
 `resource/`、生成的游戏 JSON、图片、本地环境文件和 AI 临时文件全部被 Git 忽略。Cloudflare 只收到构建后的程序；游戏记录和上传图片保存在 Supabase。
 
-浏览器只有公开 API key，写入权限由 Supabase RLS 和 Worker 管理员校验共同约束。服务端密钥仅用于 Worker 与本地导入工具。设备令牌在数据库中只保存 SHA-256 摘要，可以撤销。
+浏览器只调用同源 Worker API，无需 Supabase key 或邮箱账号。邀请码在后端用 PBKDF2 校验，数据库保存随机盐与哈希，明文不进入前端构建或仓库。管理会话使用 HttpOnly、Secure、SameSite=Strict Cookie，最长 7 天；退出或停用邀请码后服务端权限失效。每个 IP 每 15 分钟最多尝试 10 次。Supabase RLS 禁止浏览器直接读取邀请码、会话与任务或写入档案。服务端密钥仅用于 Worker 与本地维护工具。设备令牌在数据库中只保存 SHA-256 摘要，可以撤销。
 
 图片桶为私有，Worker 先检查游戏读取权限，再签发 15 分钟链接；已发出的链接在到期前仍可使用。编辑时会去除临时签名，保存稳定的图片引用。删除游戏为软删除，不自动删除图片。
