@@ -92,6 +92,7 @@ export default function App() {
     setGames(gs);
     setThemes(ts);
     setAdmin(me.admin);
+    setError('');
   }, []);
   useEffect(() => {
     let active = true;
@@ -103,14 +104,18 @@ export default function App() {
         setConfigured(ready);
         if (ready) {
           await refresh();
-          const imageRefresh = setInterval(() => {
+          if (!active) return;
+          const refreshVisible = () => {
             if (document.visibilityState === 'visible') void refresh().catch(() => {});
-          }, 600000);
+          };
+          const imageRefresh = setInterval(refreshVisible, 600000);
+          document.addEventListener('visibilitychange', refreshVisible);
           const listener = supabase!.auth.onAuthStateChange(() => {
             void refresh().catch((e) => setError(e.message));
           });
           unsubscribe = () => {
             clearInterval(imageRefresh);
+            document.removeEventListener('visibilitychange', refreshVisible);
             listener.data.subscription.unsubscribe();
           };
         } else {
