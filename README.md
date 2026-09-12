@@ -1,5 +1,7 @@
 # 玩迹 · Playtrace
 
+[打开玩迹](https://playtrace.liyuqiaolucky.workers.dev)
+
 记录玩过的游戏，收藏走过的世界。支持手机和电脑浏览，用一句话让本机 Codex 查找游戏资料，补上自己的游玩记录后保存。
 
 ## 已实现
