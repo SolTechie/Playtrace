@@ -1,4 +1,5 @@
 import { gameInputSchema, type Game } from '../../shared/schema';
+import { yearOnly } from '../../shared/release-year';
 
 export async function loadSeedGames(): Promise<Game[]> {
   if (!import.meta.env.DEV) return [];
@@ -6,7 +7,7 @@ export async function loadSeedGames(): Promise<Game[]> {
   if (!response.ok || !response.headers.get('content-type')?.includes('application/json'))
     return [];
   const initial = (await response.json()) as (Game & { id: string })[];
-  return initial.map((g) => ({ ...gameInputSchema.parse(g), id: g.id, version: 1 }));
+  return initial.map((g) => ({ ...gameInputSchema.parse(yearOnly(g)), id: g.id, version: 1 }));
 }
 let configuration: Promise<boolean> | null = null;
 export function configure() {

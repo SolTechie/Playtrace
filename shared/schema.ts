@@ -25,7 +25,6 @@ export const gameInputSchema = z.object({
   played_years: z.array(z.number().int().min(1970).max(2200)).max(100).default([]),
   hours: z.number().min(0).max(100000).nullable().default(null),
   release_year: z.number().int().min(1950).max(2200).nullable().default(null),
-  release_date: z.iso.date().nullable().default(null),
   platform: text(80).default(''),
   mc_scores: z
     .array(z.object({ platform: text(40).min(1), score: z.number().int().min(0).max(100) }))
@@ -82,7 +81,6 @@ export const gameUpdateFields = [
   'played_years',
   'hours',
   'release_year',
-  'release_date',
   'platform',
   'mc_scores',
   'wikipedia_url',
@@ -101,7 +99,6 @@ export const gameFieldLabels: Record<(typeof gameUpdateFields)[number], string> 
   played_years: '游玩年份',
   hours: '游玩时长',
   release_year: '发行年份',
-  release_date: '发行日期',
   platform: '游玩平台',
   mc_scores: 'MC 评分',
   wikipedia_url: '百科链接',

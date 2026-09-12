@@ -667,8 +667,8 @@ function DetailPage() {
                   {g.developer || '未记录'}
                 </Link>
               </dd>
-              <dt>发行时间</dt>
-              <dd>{g.release_date || g.release_year || '未记录'}</dd>
+              <dt>发行年份</dt>
+              <dd>{g.release_year ? `${g.release_year} 年` : '未记录'}</dd>
               {g.series && (
                 <>
                   <dt>游戏系列</dt>

@@ -1,3 +1,4 @@
+import { yearOnly } from '../shared/release-year';
 import { describe, expect, it } from 'vitest';
 import {
   filterGames,
@@ -70,6 +71,19 @@ describe('game records and aggregation', () => {
   });
 });
 describe('untrusted AI results and user edits', () => {
+  it('keeps year precision and accepts dates from legacy clients without persisting them', () => {
+    expect(
+      gameInputSchema.parse(yearOnly({ title: 'Date only', release_date: '2017-10-27' })),
+    ).toMatchObject({ release_year: 2017 });
+    const explicit = gameInputSchema.parse(
+      yearOnly({ title: 'Known year', release_year: 2016, release_date: '2017-10-27' }),
+    );
+    expect(explicit.release_year).toBe(2016);
+    expect(explicit).not.toHaveProperty('release_date');
+    expect(
+      gameInputSchema.parse(yearOnly({ title: 'Unknown', release_date: 'unknown' })).release_year,
+    ).toBeNull();
+  });
   it('rejects negative hours and invalid critic scores', () => {
     expect(gameInputSchema.safeParse({ ...games[0], hours: -1 }).success).toBe(false);
     expect(

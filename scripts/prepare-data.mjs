@@ -42,7 +42,6 @@ for (const folder of folders.filter((x) => x.isDirectory())) {
     ),
     hours: fields['游玩时长（小时）'] && Number.isFinite(hours) && hours >= 0 ? hours : null,
     release_year: Number(fields['游戏发布年份']) || null,
-    release_date: null,
     platform: fields['游玩平台'] || '',
     mc_scores: mc,
     wikipedia_url: fields['Wikipedia 英文链接'] || '',

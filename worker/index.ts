@@ -9,6 +9,7 @@ import {
 import { signImages, stableImages, storagePath } from './media';
 import { MAX_IMAGE_BYTES, limitedBytes, rasterInfo } from '../shared/image-file';
 import { mergeGameUpdate, GameUpdateError } from '../shared/game-update';
+import { yearOnly } from '../shared/release-year';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import {
@@ -36,12 +37,14 @@ const json = (data: unknown, status = 200) =>
     status,
     headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' },
   });
-const entity = (row: any) => {
+const entity = (row: any): any => {
   const { sources: _legacySources, ...data } = row.data;
-  return { ...data, id: row.id, version: row.version, is_published: row.is_published };
+  return { ...yearOnly(data), id: row.id, version: row.version, is_published: row.is_published };
 };
 async function presentJobs(rows: any[], db: SupabaseClient, url: string) {
-  const games = rows.filter((r) => r.result?.game).map((r) => gameInputSchema.parse(r.result.game));
+  const games = rows
+    .filter((r) => r.result?.game)
+    .map((r) => gameInputSchema.parse(yearOnly(r.result.game)));
   const signed = await signImages(games, db, url);
   let index = 0;
   return rows.map((row) =>
@@ -224,7 +227,10 @@ async function bridge(request: Request, env: Env, path: string) {
           check(targetError);
           if (!target) throw new HttpError(409, '原游戏已移除，请重新选择');
           try {
-            input.result.game = mergeGameUpdate(entity(target), input.result);
+            input.result.game = mergeGameUpdate(
+              { ...gameInputSchema.parse(entity(target)), id: target.id, version: target.version },
+              input.result,
+            );
           } catch (error) {
             if (error instanceof GameUpdateError) throw new HttpError(409, error.message);
             throw error;
@@ -339,7 +345,9 @@ export default {
         }
         if ((request.method === 'POST' && !id) || (request.method === 'PUT' && id)) {
           const raw = await body(request);
-          const parsed = (table === 'games' ? gameInputSchema : themeInputSchema).parse(raw);
+          const parsed = (table === 'games' ? gameInputSchema : themeInputSchema).parse(
+            table === 'games' ? yearOnly(raw) : raw,
+          );
           const { is_published, ...data } = parsed;
           const values = {
             data: table === 'games' ? stableImages(data, env.SUPABASE_URL) : data,
@@ -504,7 +512,9 @@ export default {
         if (request.method === 'POST') {
           if (action === 'save') {
             const raw = await body(request);
-            const parsed = (job.kind === 'game' ? gameInputSchema : themeInputSchema).parse(raw);
+            const parsed = (job.kind === 'game' ? gameInputSchema : themeInputSchema).parse(
+              job.kind === 'game' ? yearOnly(raw) : raw,
+            );
             const { is_published, ...data } = parsed;
             const { data: entityId, error } = await db.rpc('save_ai_draft', {
               p_manager_id: user.id,

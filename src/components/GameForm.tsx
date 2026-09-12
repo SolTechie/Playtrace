@@ -229,14 +229,6 @@ export default function GameForm({
             />
           </label>
           <label>
-            发行日期
-            <input
-              type="date"
-              value={form.release_date ?? ''}
-              onChange={(e) => set('release_date', e.target.value || null)}
-            />
-          </label>
-          <label>
             游戏系列
             <input
               value={form.series}

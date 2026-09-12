@@ -283,6 +283,47 @@ describe.sequential('invite access and durable AI jobs', () => {
       ).toBe('ready');
     }
   });
+  it('normalizes legacy game dates and pending drafts without changing play data or versions', async () => {
+    await as('service_role');
+    const gameId = crypto.randomUUID(),
+      draftId = crypto.randomUUID();
+    const original = {
+      title: 'Legacy date',
+      release_year: null,
+      release_date: '2017-10-27',
+      hours: 0,
+      notes: 'Keep',
+    };
+    await db.query('insert into public.games(id,data,is_published) values($1,$2,false)', [
+      gameId,
+      JSON.stringify(original),
+    ]);
+    await db.query(
+      `insert into public.ai_jobs(id,owner_id,request_id,kind,prompt,status,target_game_id,target_version,result) values($1,$2,gen_random_uuid(),'game','Update','ready',$3,1,$4)`,
+      [
+        draftId,
+        owner,
+        gameId,
+        JSON.stringify({
+          game: original,
+          update_fields: ['release_date', 'release_year', 'images'],
+        }),
+      ],
+    );
+    await db.exec('reset role');
+    await db.exec(await readFile('supabase/migrations/202609110006_release_year_only.sql', 'utf8'));
+    await as('service_role');
+    const expected = { title: 'Legacy date', release_year: 2017, hours: 0, notes: 'Keep' };
+    expect(
+      (await db.query('select data,version from public.games where id=$1', [gameId])).rows[0],
+    ).toEqual({ data: expected, version: 1 });
+    const draft = (
+      await db.query('select result,target_version from public.ai_jobs where id=$1', [draftId])
+    ).rows[0];
+    expect(draft.result.game).toEqual(expected);
+    expect(draft.result.update_fields).toEqual(['release_year', 'images']);
+    expect(draft.target_version).toBe(1);
+  });
   it('hides soft-deleted records from public readers', async () => {
     await as('service_role');
     await db.query("update public.games set deleted_at=now() where data->>'title'='Public'");
