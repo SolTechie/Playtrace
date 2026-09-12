@@ -20,7 +20,13 @@ import { useStore } from '../App';
 import { api } from '../lib/api';
 import { Modal, Empty, Busy } from '../components/common';
 import GameForm from '../components/GameForm';
-import { filterGames, themeInputSchema, type Job, type ThemeInput } from '../../shared/schema';
+import {
+  filterGames,
+  themeInputSchema,
+  gameFieldLabels,
+  type Job,
+  type ThemeInput,
+} from '../../shared/schema';
 
 type Device = { id: string; name: string; last_seen_at: string | null };
 type Event = { id: number; message: string; created_at: string };
@@ -34,13 +40,13 @@ const labels: Record<string, string> = {
   cancelled: '已取消',
 };
 export default function Studio() {
-  const { configured, admin, login, refresh, notify } = useStore();
+  const { configured, admin, login, refresh, notify, games } = useStore();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const [kind, setKind] = useState<'game' | 'theme'>(
       params.get('kind') === 'theme' ? 'theme' : 'game',
     ),
-    [prompt, setPrompt] = useState(''),
+    [prompt, setPrompt] = useState(params.get('prompt') || ''),
     [jobs, setJobs] = useState<Job[]>([]),
     [devices, setDevices] = useState<Device[]>([]),
     [events, setEvents] = useState<Event[]>([]),
@@ -49,7 +55,8 @@ export default function Studio() {
     [settings, setSettings] = useState(false),
     [review, setReview] = useState(false),
     [answer, setAnswer] = useState('');
-  const requestRef = useRef({ prompt: '', kind: '', id: '' });
+  const target = games.find((g) => g.id === params.get('game'));
+  const requestRef = useRef({ prompt: '', kind: '', target: '', id: '' });
   const selected = jobs.find((j) => j.id === params.get('job'));
   const online = devices.some(
     (d) => d.last_seen_at && Date.now() - Date.parse(d.last_seen_at) < 60000,
@@ -95,16 +102,25 @@ export default function Studio() {
     setBusy(true);
     setError('');
     try {
-      if (requestRef.current.prompt !== prompt || requestRef.current.kind !== kind)
-        requestRef.current = { prompt, kind, id: crypto.randomUUID() };
+      if (
+        requestRef.current.prompt !== prompt ||
+        requestRef.current.kind !== kind ||
+        requestRef.current.target !== (target?.id || '')
+      )
+        requestRef.current = { prompt, kind, target: target?.id || '', id: crypto.randomUUID() };
       const job = await api<Job>('/jobs', {
         method: 'POST',
-        body: JSON.stringify({ kind, prompt, request_id: requestRef.current.id }),
+        body: JSON.stringify({
+          kind,
+          prompt,
+          request_id: requestRef.current.id,
+          target_game_id: kind === 'game' ? target?.id : null,
+        }),
       });
       await load();
       choose(job.id);
       setPrompt('');
-      requestRef.current = { prompt: '', kind: '', id: '' };
+      requestRef.current = { prompt: '', kind: '', target: '', id: '' };
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -164,13 +180,30 @@ export default function Studio() {
           <div className="compose-tabs">
             <button className={kind === 'game' ? 'active' : ''} onClick={() => setKind('game')}>
               <Plus size={17} />
-              添加游戏
+              录入 / 补全游戏
             </button>
             <button className={kind === 'theme' ? 'active' : ''} onClick={() => setKind('theme')}>
               <Sparkles size={17} />
               创建主题
             </button>
           </div>
+          {kind === 'game' && target && (
+            <div className="notice">
+              正在补全已有游戏：{target.title}
+              <button
+                className="button quiet small"
+                onClick={() =>
+                  setParams((p) => {
+                    const next = new URLSearchParams(p);
+                    next.delete('game');
+                    return next;
+                  })
+                }
+              >
+                取消指定
+              </button>
+            </div>
+          )}
           <form onSubmit={send}>
             <label className="prompt-label" htmlFor="ai-prompt">
               {kind === 'game' ? '想记录哪款游戏？' : '想把哪些游戏放在一起？'}
@@ -181,7 +214,7 @@ export default function Studio() {
               maxLength={4000}
               placeholder={
                 kind === 'game'
-                  ? '例如：添加《空洞骑士》，Steam 上玩了 40 小时，2026 年通关。'
+                  ? '例如：哈迪斯2没有图片，帮我补全。也可以说：添加空洞骑士，Steam 上玩了 40 小时。'
                   : '例如：把我玩过的轨迹系列按年份做成时间线，再展示游玩平台分布。'
               }
               value={prompt}
@@ -201,7 +234,7 @@ export default function Studio() {
             <Sparkles size={18} />
             <p>
               {kind === 'game'
-                ? 'AI 会搜索发行信息、开发商、类型和评分，自动保存封面与截图。你的游玩记录可以在保存前补充。'
+                ? '可以新增游戏，也可以补图、补全资料或更新已有记录。AI 先生成草稿，你检查确认后保存。'
                 : 'AI 会将你的描述转换成游戏筛选条件、图表和布局。主题保存后会随游戏记录自动更新。'}
             </p>
           </div>
@@ -331,8 +364,20 @@ export default function Studio() {
               )}
               {selected.status === 'ready' && (
                 <div className="draft-summary">
-                  <p className="eyebrow">READY TO SAVE</p>
+                  <p className="eyebrow">
+                    {selected.target_game_id ? 'UPDATE EXISTING GAME' : 'READY TO SAVE'}
+                  </p>
                   <h2>{selected.result?.game?.title || selected.result?.theme?.title}</h2>
+                  {selected.target_game_id && (
+                    <p className="notice">
+                      将更新已有游戏 · AI 补全字段：
+                      {selected.result?.update_fields
+                        ?.map((field) => gameFieldLabels[field])
+                        .join('、')}
+                      <br />
+                      <Link to={`/games/${selected.target_game_id}`}>查看原记录</Link>
+                    </p>
+                  )}
                   <p className="muted">
                     {selected.kind === 'game'
                       ? `${selected.result?.game?.developer || '开发商待补充'} · ${selected.result?.game?.release_year || '发行年份待补充'}`
@@ -349,28 +394,33 @@ export default function Studio() {
                   )}
                   <button className="button primary" onClick={() => setReview(true)}>
                     <Check size={18} />
-                    {selected.kind === 'game' ? '检查资料并补充游玩记录' : '预览并保存主题'}
+                    {selected.target_game_id
+                      ? '检查补全内容'
+                      : selected.kind === 'game'
+                        ? '检查资料并补充游玩记录'
+                        : '预览并保存主题'}
                   </button>
                 </div>
               )}
               {selected.status === 'saved' && (
                 <div className="success-result">
                   <Check size={28} />
-                  <h3>已加入你的玩迹</h3>
+                  <h3>{selected.target_game_id ? '原游戏已更新' : '已加入你的玩迹'}</h3>
                   <Link className="button quiet" to={selected.kind === 'game' ? '/' : '/themes'}>
                     查看{selected.kind === 'game' ? '游戏库' : '主题收藏'}
                   </Link>
                 </div>
               )}
               <div className="job-actions">
-                {['failed', 'cancelled'].includes(selected.status) && (
+                {(['failed', 'cancelled'].includes(selected.status) ||
+                  (selected.status === 'ready' && selected.target_game_id)) && (
                   <button
                     className="button quiet"
                     disabled={busy}
                     onClick={() => void action('retry')}
                   >
                     <RefreshCw size={16} />
-                    重新尝试
+                    {selected.target_game_id ? '重新生成补全草稿' : '重新尝试'}
                   </button>
                 )}
                 {['queued', 'running', 'needs_input', 'ready'].includes(selected.status) && (
@@ -398,20 +448,27 @@ export default function Studio() {
       )}
       {review && selected?.result && (
         <Modal
-          title={selected.kind === 'game' ? '检查游戏资料' : '保存主题收藏'}
+          title={
+            selected.target_game_id
+              ? '检查游戏修改'
+              : selected.kind === 'game'
+                ? '检查游戏资料'
+                : '保存主题收藏'
+          }
           onClose={() => setReview(false)}
           wide
         >
           {selected.kind === 'game' && selected.result.game ? (
             <GameForm
               initial={selected.result.game}
+              submitLabel={selected.target_game_id ? '保存到原游戏' : '保存游戏'}
               onSave={async (data) => {
                 const saved = await api<{ id: string }>(`/jobs/${selected.id}/save`, {
                   method: 'POST',
                   body: JSON.stringify(data),
                 });
                 await refresh();
-                notify('游戏已加入玩迹');
+                notify(selected.target_game_id ? '原游戏已更新' : '游戏已加入玩迹');
                 setReview(false);
                 navigate(`/games/${saved.id}`);
               }}

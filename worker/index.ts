@@ -8,11 +8,13 @@ import {
 } from './access';
 import { signImages, stableImages, storagePath } from './media';
 import { MAX_IMAGE_BYTES, limitedBytes, rasterInfo } from '../shared/image-file';
+import { mergeGameUpdate, GameUpdateError } from '../shared/game-update';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import {
   aiResultSchema,
   gameInputSchema,
+  gameUpdateFields,
   jobCreateSchema,
   themeInputSchema,
 } from '../shared/schema';
@@ -109,13 +111,22 @@ async function bridge(request: Request, env: Env, path: string) {
   if (path === '/api/bridge/context' && request.method === 'GET') {
     const { data, error } = await db
       .from('games')
-      .select('id,data')
+      .select('id,data,version,is_published')
       .is('deleted_at', null)
       .limit(1000);
     check(error);
     return json({
       games: (data || []).map((r) => ({
         id: r.id,
+        version: r.version,
+        english_title: r.data.english_title,
+        images_count: r.data.images?.length || 0,
+        missing_fields: gameUpdateFields.filter(
+          (field) =>
+            r.data[field] == null ||
+            r.data[field] === '' ||
+            (Array.isArray(r.data[field]) && !r.data[field].length),
+        ),
         title: r.data.title,
         developer: r.data.developer,
         tags: r.data.tags,
@@ -181,20 +192,58 @@ async function bridge(request: Request, env: Env, path: string) {
       const job = await ownedJob(db, match[1], device.owner_id);
       if (!input.result.question && !(job.kind === 'game' ? input.result.game : input.result.theme))
         throw new HttpError(422, 'AI 返回的结果类型不正确');
-      if (input.result.game) {
+      if (!input.result.question) {
+        if (
+          job.kind === 'theme' &&
+          (input.result.target_game_id ||
+            input.result.target_version ||
+            input.result.update_fields.length)
+        )
+          throw new HttpError(422, '主题任务不能修改游戏');
+        if (job.target_game_id && input.result.target_game_id !== job.target_game_id)
+          throw new HttpError(422, 'AI 结果没有对应指定的原游戏，请重新尝试');
+        if (
+          !input.result.target_game_id &&
+          (input.result.target_version || input.result.update_fields.length)
+        )
+          throw new HttpError(422, '请明确要更新哪条游戏记录');
+      }
+      if (input.result.game && !input.result.question) {
+        if (input.result.target_game_id && !input.result.update_fields.includes('images'))
+          input.result.game.images = [];
         if (input.result.game.images.some((image) => !storagePath(image.url, env.SUPABASE_URL!)))
           throw new HttpError(422, '请先将 AI 图片保存到游戏图片库');
         input.result.game = stableImages(input.result.game, env.SUPABASE_URL!);
+        if (input.result.target_game_id) {
+          const { data: target, error: targetError } = await db
+            .from('games')
+            .select('*')
+            .eq('id', input.result.target_game_id)
+            .is('deleted_at', null)
+            .maybeSingle();
+          check(targetError);
+          if (!target) throw new HttpError(409, '原游戏已移除，请重新选择');
+          try {
+            input.result.game = mergeGameUpdate(entity(target), input.result);
+          } catch (error) {
+            if (error instanceof GameUpdateError) throw new HttpError(409, error.message);
+            throw error;
+          }
+          updates.target_game_id = target.id;
+          updates.target_version = target.version;
+        }
       }
       updates.result = input.result;
       updates.status = input.result.question ? 'needs_input' : 'ready';
       updates.progress = input.result.question
         ? '需要补充信息'
-        : input.result.game
-          ? input.result.game.images.length
-            ? `资料和 ${input.result.game.images.length} 张图片已整理好，等待保存`
-            : '资料已整理好，暂未找到可保存的图片，可手动上传'
-          : '主题已整理好，等待保存';
+        : input.result.target_game_id
+          ? '补全草稿已准备好，确认后更新原游戏'
+          : input.result.game
+            ? input.result.game.images.length
+              ? `资料和 ${input.result.game.images.length} 张图片已整理好，等待保存`
+              : '资料已整理好，暂未找到可保存的图片，可手动上传'
+            : '主题已整理好，等待保存';
       updates.lease_until = null;
     }
     if (input.error) {
@@ -378,7 +427,9 @@ export default {
         if (request.method === 'GET') {
           const { data, error } = await db
             .from('ai_jobs')
-            .select('id,kind,prompt,status,progress,result,error,created_at,updated_at,attempts')
+            .select(
+              'id,kind,prompt,status,progress,result,error,created_at,updated_at,attempts,target_game_id,target_version',
+            )
             .eq('owner_id', user.id)
             .order('created_at', { ascending: false })
             .limit(30);
@@ -387,6 +438,8 @@ export default {
         }
         if (request.method === 'POST') {
           const input = jobCreateSchema.parse(await body(request));
+          if (input.kind !== 'game' && input.target_game_id)
+            throw new HttpError(400, '主题任务不能指定游戏修改目标');
           const { data: old } = await srv
             .from('ai_jobs')
             .select('*')
@@ -401,9 +454,21 @@ export default {
             .in('status', ['queued', 'running']);
           check(countError);
           if ((count || 0) >= 5) throw new HttpError(429, '已有 5 个任务等待处理，请稍后再添加');
+          let targetVersion: number | null = null;
+          if (input.target_game_id) {
+            const { data: target, error: targetError } = await srv
+              .from('games')
+              .select('version')
+              .eq('id', input.target_game_id)
+              .is('deleted_at', null)
+              .maybeSingle();
+            check(targetError);
+            if (!target) throw new HttpError(404, '要补全的游戏不存在');
+            targetVersion = target.version;
+          }
           const { data, error } = await srv
             .from('ai_jobs')
-            .insert({ ...input, owner_id: user.id })
+            .insert({ ...input, owner_id: user.id, target_version: targetVersion })
             .select('*')
             .single();
           if (error?.code === '23505') {
@@ -447,6 +512,8 @@ export default {
               p_data: job.kind === 'game' ? stableImages(data, env.SUPABASE_URL) : data,
               p_published: is_published,
             });
+            if (error?.code === 'PT409' || error?.code === '40001')
+              throw new HttpError(409, '原游戏已被修改或移除，请重新生成补全草稿');
             check(error);
             return json({ id: entityId, kind: job.kind });
           }
@@ -460,13 +527,18 @@ export default {
             ['queued', 'running', 'needs_input', 'ready'].includes(job.status)
           )
             update = { ...update, status: 'cancelled', progress: '任务已取消' };
-          else if (action === 'retry' && ['failed', 'cancelled'].includes(job.status))
+          else if (
+            action === 'retry' &&
+            (['failed', 'cancelled'].includes(job.status) ||
+              (job.status === 'ready' && job.target_game_id))
+          )
             update = {
               ...update,
               status: 'queued',
               progress: '等待电脑领取任务',
               attempts: 0,
               error: null,
+              result: null,
             };
           else if (action === 'answer' && job.status === 'needs_input') {
             const { answer } = z

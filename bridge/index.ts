@@ -92,12 +92,18 @@ while (!stopping) {
         kind: job.kind,
         prompt: job.prompt,
         context: context.games,
+        targetGameId: job.target_game_id,
         onProgress: report,
         signal: controller.signal,
         timeoutMs: Number(process.env.BRIDGE_TIMEOUT_MS) || 900000,
         bin,
       });
-      if (job.kind === 'game' && result.game && !result.question) {
+      if (
+        job.kind === 'game' &&
+        result.game &&
+        !result.question &&
+        (!result.target_game_id || result.update_fields.includes('images'))
+      ) {
         result.game.images = await collectGameImages(result.game, {
           progress: report,
           signal: controller.signal,

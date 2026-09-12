@@ -72,12 +72,54 @@ export const themeInputSchema = z.object({
 });
 export type ThemeInput = z.infer<typeof themeInputSchema>;
 export type Theme = ThemeInput & { id: string; version: number };
+export const gameUpdateFields = [
+  'title',
+  'english_title',
+  'japanese_title',
+  'developer',
+  'tags',
+  'status',
+  'played_years',
+  'hours',
+  'release_year',
+  'release_date',
+  'platform',
+  'mc_scores',
+  'wikipedia_url',
+  'images',
+  'notes',
+  'personal_rating',
+  'series',
+] as const;
+export const gameFieldLabels: Record<(typeof gameUpdateFields)[number], string> = {
+  title: '游戏名称',
+  english_title: '英文名称',
+  japanese_title: '日文名称',
+  developer: '开发商',
+  tags: '类型标签',
+  status: '游玩状态',
+  played_years: '游玩年份',
+  hours: '游玩时长',
+  release_year: '发行年份',
+  release_date: '发行日期',
+  platform: '游玩平台',
+  mc_scores: 'MC 评分',
+  wikipedia_url: '百科链接',
+  images: '游戏图片',
+  notes: '笔记',
+  personal_rating: '个人评分',
+  series: '游戏系列',
+};
 export const jobCreateSchema = z.object({
   kind: z.enum(['game', 'theme']),
   prompt: text(4000).min(2),
   request_id: z.uuid(),
+  target_game_id: z.uuid().nullable().default(null),
 });
 export const aiResultSchema = z.object({
+  target_game_id: z.uuid().nullable().default(null),
+  target_version: z.number().int().positive().nullable().default(null),
+  update_fields: z.array(z.enum(gameUpdateFields)).max(17).default([]),
   game: gameInputSchema.nullable(),
   theme: themeInputSchema.nullable(),
   question: text(1000).nullable(),
@@ -85,6 +127,8 @@ export const aiResultSchema = z.object({
 export type AIResult = z.infer<typeof aiResultSchema>;
 export type Job = {
   id: string;
+  target_game_id?: string | null;
+  target_version?: number | null;
   kind: 'game' | 'theme';
   prompt: string;
   status: 'queued' | 'running' | 'needs_input' | 'ready' | 'saved' | 'failed' | 'cancelled';

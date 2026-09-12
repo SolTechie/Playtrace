@@ -30,6 +30,10 @@ beforeAll(async () => {
  insert into public.ai_jobs(id,owner_id,request_id,kind,prompt) values('${job}','${owner}',gen_random_uuid(),'game','Add a game');`);
   await db.exec(await readFile('supabase/migrations/202609110002_invite_access.sql', 'utf8'));
   await db.exec(await readFile('supabase/migrations/202609110003_salted_invites.sql', 'utf8'));
+  await db.exec(await readFile('supabase/migrations/202609110004_update_game_drafts.sql', 'utf8'));
+  await db.exec(
+    await readFile('supabase/migrations/202609110005_draft_conflict_status.sql', 'utf8'),
+  );
   await db.exec(
     `insert into public.archive_managers(id) values('${other}');insert into public.management_invites(id,manager_id,label,code_hash) values('${invitation}','${owner}','test','${code}');`,
   );
@@ -216,6 +220,68 @@ describe.sequential('invite access and durable AI jobs', () => {
     expect(
       (await db.query("select * from public.games where data->>'title'='Duplicate'")).rows,
     ).toHaveLength(0);
+  });
+  it('updates the original game once without creating a duplicate', async () => {
+    await as('service_role');
+    const gameId = crypto.randomUUID(),
+      updateJob = crypto.randomUUID();
+    await db.query(
+      `insert into public.games(id,data,is_published) values($1,'{"title":"Existing","hours":0,"notes":"keep"}',false)`,
+      [gameId],
+    );
+    await db.query(
+      `insert into public.ai_jobs(id,owner_id,request_id,kind,prompt,status,target_game_id,target_version) values($1,$2,gen_random_uuid(),'game','Add pictures','ready',$3,1)`,
+      [updateJob, owner, gameId],
+    );
+    const before = (await db.query('select count(*)::int as count from public.games')).rows[0];
+    const data = JSON.stringify({
+      title: 'Existing',
+      hours: 0,
+      notes: 'keep',
+      images: [{ url: 'https://storage.test/image.jpg', alt: 'picture' }],
+    });
+    for (let n = 0; n < 2; n++) {
+      const saved = await db.query(`select public.save_ai_draft($1,$2,$3,false) as id`, [
+        owner,
+        updateJob,
+        data,
+      ]);
+      expect(saved.rows[0].id).toBe(gameId);
+    }
+    expect((await db.query('select count(*)::int as count from public.games')).rows[0]).toEqual(
+      before,
+    );
+    const saved = (
+      await db.query('select version,data,is_published from public.games where id=$1', [gameId])
+    ).rows[0];
+    expect(saved.version).toBe(2);
+    expect(saved.is_published).toBe(false);
+    expect(saved.data).toEqual(JSON.parse(data));
+  });
+  it('rejects stale/deleted targets without changing the draft or inserting records', async () => {
+    await as('service_role');
+    for (const deleted of [false, true]) {
+      const gameId = crypto.randomUUID(),
+        updateJob = crypto.randomUUID();
+      await db.query(
+        `insert into public.games(id,data,version,deleted_at,is_published) values($1,'{"title":"Keep current","hours":12}',2,$2,false)`,
+        [gameId, deleted ? new Date() : null],
+      );
+      await db.query(
+        `insert into public.ai_jobs(id,owner_id,request_id,kind,prompt,status,target_game_id,target_version) values($1,$2,gen_random_uuid(),'game','Update','ready',$3,$4)`,
+        [updateJob, owner, gameId, deleted ? 2 : 1],
+      );
+      await expect(
+        db.query(`select public.save_ai_draft($1,$2,'{"title":"Stale"}',true)`, [owner, updateJob]),
+      ).rejects.toMatchObject({ code: 'PT409' });
+      expect(
+        (await db.query('select version,data from public.games where id=$1', [gameId])).rows[0],
+      ).toEqual({ version: 2, data: { title: 'Keep current', hours: 12 } });
+      expect(
+        (await db.query('select status from public.ai_jobs where id=$1', [updateJob])).rows[0]
+          .status,
+      ).toBe('ready');
+    }
   });
   it('hides soft-deleted records from public readers', async () => {
     await as('service_role');

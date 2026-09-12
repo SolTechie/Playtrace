@@ -566,6 +566,13 @@ function DetailPage() {
         </Link>
         {admin && (
           <div className="header-actions">
+            <Link
+              className="button quiet small"
+              to={`/studio?game=${g.id}&prompt=${encodeURIComponent(`给《${g.title}》补全缺少的资料和图片，保留已有游玩记录。`)}`}
+            >
+              <Sparkles size={15} />
+              AI 补全
+            </Link>
             <Link className="button quiet small" to={`/games/${g.id}/edit`}>
               <Pencil size={15} />
               编辑
