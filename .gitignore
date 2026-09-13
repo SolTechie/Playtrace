@@ -16,3 +16,6 @@ coverage/
 data/
 public/dev-data/
 .vite/
+
+artifacts/
+desktop/.build/

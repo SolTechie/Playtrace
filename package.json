@@ -1,6 +1,6 @@
 {
   "name": "playtrace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,7 +14,9 @@
     "bridge": "node --import tsx bridge/index.ts",
     "db:migrate": "node --env-file=.env.database scripts/migrate.mjs",
     "invite:create": "node --env-file=.env.local scripts/create-invite.mjs",
-    "bridge:setup": "node scripts/setup-bridge.mjs"
+    "bridge:setup": "node scripts/setup-bridge.mjs",
+    "desktop:build": "node scripts/build-desktop.mjs",
+    "desktop:test": "node scripts/test-desktop.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

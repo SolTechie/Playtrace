@@ -1,3 +1,4 @@
+import { apiFetch } from './transport';
 import { gameInputSchema, type Game } from '../../shared/schema';
 import { yearOnly } from '../../shared/release-year';
 
@@ -14,7 +15,7 @@ export function configure() {
   return (configuration ??= initialize());
 }
 async function initialize() {
-  const response = await fetch('/api/config');
+  const response = await apiFetch('/config');
   if (!response.ok) throw new Error('无法连接网站服务，请稍后重试。');
   const config = await response.json();
   return config.configured as boolean;
@@ -22,7 +23,7 @@ async function initialize() {
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
-  const response = await fetch(`/api${path}`, { ...options, headers, credentials: 'same-origin' });
+  const response = await apiFetch(path, { ...options, headers });
   const data = await response.json().catch(() => ({ error: '服务器响应异常' }));
   if (!response.ok) {
     if (response.status === 401) window.dispatchEvent(new Event('playtrace:access'));

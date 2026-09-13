@@ -394,12 +394,12 @@ footer {
 footer span {
   letter-spacing: 0.06em;
 }
-@media (min-width: 1500px) {
+@container playtrace-shell (min-width: 1500px) {
   .game-grid {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 }
-@media (max-width: 1100px) {
+@container playtrace-shell (max-width: 1100px) {
   .game-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -410,7 +410,7 @@ footer span {
     gap: 22px;
   }
 }
-@media (max-width: 760px) {
+@container playtrace-shell (max-width: 760px) {
   .site-header {
     height: auto;
     min-height: 76px;
@@ -1844,7 +1844,7 @@ label small {
   font-size: 0.75rem;
   color: #a5b8c4;
 }
-@media (max-width: 1100px) {
+@container playtrace-shell (max-width: 1100px) {
   .toolbar {
     flex-wrap: wrap;
   }
@@ -1883,7 +1883,7 @@ label small {
     font-size: 1.9rem;
   }
 }
-@media (max-width: 760px) {
+@container playtrace-shell (max-width: 760px) {
   .header-actions .button {
     font-size: 0.8rem;
     min-height: 36px;
@@ -2148,7 +2148,7 @@ label small {
     max-height: 92dvh;
   }
 }
-@media (max-width: 380px) {
+@container playtrace-shell (max-width: 380px) {
   .brand-caption {
     display: none;
   }
@@ -2230,7 +2230,7 @@ label small {
 .desktop-ai-note {
   margin-top: 20px;
 }
-@media (max-width: 760px) {
+@container playtrace-shell (max-width: 760px) {
   .desktop-ai-grid {
     grid-template-columns: 1fr;
   }

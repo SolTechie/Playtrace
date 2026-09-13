@@ -1,0 +1,157 @@
+.app-shell {
+  container: playtrace-shell / inline-size;
+}
+/* The website uses a compact phone layout even on a large monitor. The Mac
+   bundle retains the full library workspace and its desktop navigation. */
+html[data-platform='web'] .app-shell {
+  max-width: 600px;
+  margin: 0 auto;
+  min-height: 100dvh;
+  border-inline: 1px solid #202528;
+}
+html[data-platform='web'] main {
+  padding: 28px 20px 86px;
+}
+html[data-platform='web'] .site-header {
+  min-height: 76px;
+  padding: max(16px, env(safe-area-inset-top)) 20px 16px;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+html[data-platform='web'] .site-header nav {
+  position: fixed;
+  z-index: 40;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(100%, 600px);
+  height: auto;
+  padding: 8px 16px max(10px, env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: #141719f5;
+  backdrop-filter: blur(18px);
+  justify-content: space-around;
+  gap: 0;
+}
+html[data-platform='web'] .site-header nav a {
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 0;
+  min-height: 48px;
+  font-size: 11px;
+}
+html[data-platform='web'] .site-header nav a svg {
+  width: 21px;
+  height: 21px;
+}
+html[data-platform='web'] .site-header nav a.active:after {
+  display: none;
+}
+html[data-platform='web'] .brand-caption {
+  display: none;
+}
+html[data-platform='web'] .header-actions .button {
+  padding: 8px;
+  font-size: 12px;
+}
+html[data-platform='web'] .header-actions .button svg {
+  display: none;
+}
+html[data-platform='web'] .toast {
+  bottom: calc(85px + env(safe-area-inset-bottom));
+}
+html[data-platform='web'] .desktop-ai-card {
+  padding: 20px;
+}
+html[data-platform='desktop'] {
+  font-family:
+    'DM Sans',
+    -apple-system,
+    'PingFang SC',
+    sans-serif;
+}
+html[data-platform='desktop'] .site-header {
+  padding-inline: 36px;
+  height: 76px;
+}
+html[data-platform='desktop'] main {
+  padding: 38px 36px 0;
+}
+html[data-platform='desktop'] .site-header .brand::after {
+  content: 'MAC';
+  letter-spacing: 0.12em;
+  font-size: 9px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 4px 5px;
+  margin-left: 3px;
+}
+.cli-commands {
+  margin-top: 24px;
+}
+.cli-commands pre {
+  background: #101416;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.9;
+  color: #c2e3a9;
+}
+.cli-commands p {
+  margin: 12px 0;
+  line-height: 1.8;
+}
+.search-box {
+  flex-direction: row;
+}
+.search-box input {
+  padding: 0;
+  min-height: 24px;
+  border-radius: 0;
+}
+html[data-platform='web'] .toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+html[data-platform='web'] .toolbar .search-box {
+  width: 100%;
+  min-height: 46px;
+}
+html[data-platform='web'] .toolbar .filter-toggle {
+  margin: 0;
+  min-height: 46px;
+}
+html[data-platform='web'] .toolbar .status-tabs {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+html[data-platform='web'] input,
+html[data-platform='web'] textarea,
+html[data-platform='web'] select {
+  font-size: 16px;
+}
+html[data-platform='web'] .page-heading {
+  align-items: center;
+}
+html[data-platform='web'] .page-heading > div {
+  min-width: 0;
+}
+html[data-platform='web'] .page-heading h1 {
+  font-size: clamp(1.5rem, 6vw, 2rem);
+}
+html[data-platform='web'] .page-heading > .button {
+  font-size: 12px;
+  padding: 9px 11px;
+}
+html[data-platform='web'] .stat-card > strong {
+  font-size: 1.5rem;
+}
+html[data-platform='web'] .stat-card > strong small {
+  display: inline-block;
+  white-space: nowrap;
+}
