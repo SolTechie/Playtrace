@@ -3,7 +3,6 @@ dist/
 .wrangler/
 .env*
 !.env.example
-!.env.bridge.example
 !.env.local.example
 .dev.vars*
 !.dev.vars.example

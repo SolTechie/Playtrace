@@ -179,7 +179,7 @@ export default function App() {
             <div className="header-actions">
               <Link className="button quiet" to="/studio">
                 <Sparkles size={16} />
-                AI 工作台
+                桌面 AI 指南
               </Link>
               <button
                 className="icon-button"
@@ -280,7 +280,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
             }
           }}
         >
-          <p className="muted">输入邀请码后，可以编辑游戏、添加 AI 资料和创建主题。</p>
+          <p className="muted">输入邀请码后，可以编辑游戏、管理游戏图片和主题。</p>
           <label>
             数字邀请码
             <input
@@ -311,7 +311,7 @@ function InviteModal({ onClose }: { onClose: () => void }) {
           <p>当前是本地预览。连接云端并配置邀请码后，即可保存和管理游戏。</p>
           <Link className="button primary" to="/studio" onClick={onClose}>
             <Sparkles size={16} />
-            查看 AI 工作台
+            查看桌面 AI 指南
           </Link>
         </div>
       )}
@@ -566,12 +566,9 @@ function DetailPage() {
         </Link>
         {admin && (
           <div className="header-actions">
-            <Link
-              className="button quiet small"
-              to={`/studio?game=${g.id}&prompt=${encodeURIComponent(`给《${g.title}》补全缺少的资料和图片，保留已有游玩记录。`)}`}
-            >
+            <Link className="button quiet small" to={`/studio?game=${g.id}`}>
               <Sparkles size={15} />
-              AI 补全
+              桌面 AI 补全
             </Link>
             <Link className="button quiet small" to={`/games/${g.id}/edit`}>
               <Pencil size={15} />
@@ -801,7 +798,8 @@ function EditorPage() {
       >
         {!id && (
           <Link className="button primary" to="/studio">
-            <Sparkles size={17} />让 AI 帮我填写
+            <Sparkles size={17} />
+            在电脑上用 AI 整理
           </Link>
         )}
       </PageHeading>
@@ -955,7 +953,7 @@ function ThemesPage() {
         {(admin || !configured) && (
           <Link className="button primary" to="/studio?kind=theme">
             <Sparkles size={17} />
-            AI 创建主题
+            桌面 AI 指南
           </Link>
         )}
       </PageHeading>
@@ -984,7 +982,7 @@ function ThemesPage() {
       </div>
       {themes.length === 0 && (
         <Empty title="主题收藏还在等待第一段故事">
-          <p>可以在 AI 工作台输入一句话，创建一个属于你的游戏专题。</p>
+          <p>可以在电脑端借助 AI 规划游戏专题。</p>
         </Empty>
       )}
     </>
