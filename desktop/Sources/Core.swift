@@ -1,5 +1,7 @@
 import Foundation
 import Security
+import CryptoKit
+import AppKit
 
 struct PlaytraceError: LocalizedError {
     let message: String
@@ -15,7 +17,7 @@ enum Policy {
         // No arbitrary URL, encoded path, task queue, local command, or redirect support.
         if path.contains("%") || path.contains("\\") || path.contains("#") { return false }
         if method == "GET", ["/config", "/health", "/me"].contains(path) { return true }
-        if method == "POST", ["/access/verify", "/access/exit", "/upload"].contains(path) { return true }
+        if method == "POST", ["/access/native/start", "/access/native/claim", "/access/exit", "/upload"].contains(path) { return true }
         let parts = path.split(separator: "?", omittingEmptySubsequences: false)
         guard parts.count <= 2 else { return false }
         let components = parts[0].split(separator: "/", omittingEmptySubsequences: false)
@@ -28,6 +30,19 @@ enum Policy {
             return q.count == 2 && q[0] == "version" && Int(q[1]).map { $0 > 0 } == true
         }
         return parts.count == 1 && ["GET", "PUT"].contains(method)
+    }
+    static func allowsWeb(_ path: String, method: String) -> Bool {
+        if path == "/access/google/login" { return method == "POST" }
+        return !path.hasPrefix("/access/native/") && allows(path, method: method)
+    }
+    static func loginURL(_ value: String, id: String) -> URL? {
+        guard isUUID(id), let url = URL(string: value),
+              let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == "https", parts.host == URL(string: origin)?.host,
+              parts.port == nil, parts.user == nil, parts.password == nil, parts.fragment == nil,
+              parts.path == "/api/access/native/authorize",
+              parts.queryItems == [URLQueryItem(name: "id", value: id)] else { return nil }
+        return url
     }
     static func trustedFrame(scheme: String, host: String, main: Bool) -> Bool {
         main && scheme == "playtrace" && host == "app"
@@ -55,7 +70,7 @@ final class SessionStore {
         return String(data: data, encoding: .utf8)
     }
     func write(_ token: String) throws {
-        guard token.range(of: "^ps_[a-f0-9]{64}$", options: .regularExpression) != nil else {
+        guard token.range(of: "^pg_[a-f0-9]{64}$", options: .regularExpression) != nil else {
             throw PlaytraceError("服务器返回了无效会话。")
         }
         let attributes = [kSecValueData as String: Data(token.utf8)]
@@ -120,7 +135,7 @@ final class APIClient {
         request.setValue(Policy.origin, forHTTPHeaderField: "Origin")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.setValue(contentType, forHTTPHeaderField: "Content-Type")
-        if path != "/access/verify", let token = try store.read() {
+        if path != "/access/native/start", let token = try store.read(), token.hasPrefix("pg_") {
             request.setValue("\(Policy.cookieName)=\(token)", forHTTPHeaderField: "Cookie")
         }
         let (data, rawResponse) = try await session.data(for: request)
@@ -128,7 +143,7 @@ final class APIClient {
             throw PlaytraceError("无效的服务响应。")
         }
         if (300..<400).contains(response.statusCode) { throw PlaytraceError("服务重定向已拒绝。") }
-        if path == "/access/verify", (200..<300).contains(response.statusCode) {
+        if path == "/access/native/claim", response.statusCode == 200 {
             let headers = response.allHeaderFields.reduce(into: [String: String]()) { dict, pair in
                 if let key = pair.key as? String, let value = pair.value as? String { dict[key] = value }
             }
@@ -141,6 +156,33 @@ final class APIClient {
     }
     func json(_ path: String, method: String = "GET", body: Any? = nil) async throws -> Any {
         try await request(path, method: method, body: body.map { try JSONSerialization.data(withJSONObject: $0) }).checked()
+    }
+    func loginWithGoogle(client: String, confirm: @MainActor (String) -> Bool) async throws {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw PlaytraceError("无法生成登录校验，请重试。")
+        }
+        let secret = bytes.map { String(format: "%02x", $0) }.joined()
+        let challenge = SHA256.hash(data: Data(secret.utf8)).map { String(format: "%02x", $0) }.joined()
+        guard let start = try await json("/access/native/start", method: "POST", body: ["challenge": challenge, "client": client]) as? [String: Any],
+              let id = start["id"] as? String, let rawURL = start["url"] as? String,
+              let url = Policy.loginURL(rawURL, id: id) else { throw PlaytraceError("无效的登录地址。") }
+        let code = String(id.prefix(8)).uppercased()
+        guard await confirm(code) else { throw PlaytraceError("已取消 Google 登录。") }
+        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        guard opened else { throw PlaytraceError("无法打开系统浏览器，请检查默认浏览器设置。") }
+        // A bounded, user-initiated login exchange only. No daemon or remote task polling.
+        let deadline = Date().addingTimeInterval(300)
+        while Date() < deadline {
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            try Task.checkCancellation()
+            let response = try await request("/access/native/claim", method: "POST",
+                body: JSONSerialization.data(withJSONObject: ["id": id, "secret": secret]))
+            if response.status == 202 { continue }
+            _ = try response.checked()
+            return
+        }
+        throw PlaytraceError("Google 登录已超时，请重新发起登录。")
     }
 }
 

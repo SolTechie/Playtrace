@@ -86,7 +86,7 @@ export default function GameForm({
   return (
     <form className="game-form" onSubmit={submit}>
       {!configured && (
-        <div className="notice">当前可预览填写界面。连接云端并验证邀请码后即可保存。</div>
+        <div className="notice">当前可预览填写界面。连接云端并使用 Google 账号登录后即可保存。</div>
       )}
       <section className="form-section">
         <div className="section-title">

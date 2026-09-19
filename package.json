@@ -1,6 +1,6 @@
 {
   "name": "playtrace",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,8 @@
     "invite:create": "node --env-file=.env.local scripts/create-invite.mjs",
     "bridge:setup": "node scripts/setup-bridge.mjs",
     "desktop:build": "node scripts/build-desktop.mjs",
-    "desktop:test": "node scripts/test-desktop.mjs"
+    "desktop:test": "node scripts/test-desktop.mjs",
+    "auth:setup": "node --env-file=.env.local scripts/setup-google-auth.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.57.0",

@@ -19,6 +19,18 @@ import Foundation
         check(!Policy.trustedFrame(scheme: "playtrace", host: "evil", main: true), "external host")
         check(!Policy.trustedFrame(scheme: "playtrace", host: "app", main: false), "iframe")
         check(Policy.trustedFrame(scheme: "playtrace", host: "app", main: true), "bundled main frame")
+        check(!Policy.allows("/access/verify", method: "POST"), "old invite route removed")
+        check(Policy.allowsWeb("/access/google/login", method: "POST"), "native login action")
+        check(!Policy.allows("/access/google/login", method: "POST"), "login action is not an HTTP endpoint")
+        for path in ["/access/native/start", "/access/native/claim"] {
+            check(Policy.allows(path, method: "POST"), "native-only auth route")
+            check(!Policy.allowsWeb(path, method: "POST"), "web content cannot access auth proofs")
+        }
+        let login = Policy.origin + "/api/access/native/authorize?id=" + id
+        check(Policy.loginURL(login, id: id) != nil, "fixed-origin login URL")
+        for value in [login.replacingOccurrences(of: "https:", with: "http:"), login.replacingOccurrences(of: "workers.dev", with: "evil.test"), login + "&next=https://evil.test", login + "#fragment", Policy.origin + "/api/jobs?id=" + id] {
+            check(Policy.loginURL(value, id: id) == nil, "reject unsafe browser authorization URL")
+        }
         let original: [String: Any] = ["id": id, "version": 3, "title": "哈迪斯2", "hours": 42.5, "notes": "保留我的笔记", "is_published": false, "images": [["url": "https://example.com/image.png", "alt": "封面"]]]
         let merged = try Draft.merge(["release_year": 2025], into: original, resource: "games", version: 3)
         check(merged["hours"] as? Double == 42.5, "preserve subjective hours")

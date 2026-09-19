@@ -2,9 +2,9 @@ import Foundation
 import Darwin
 
 let help = """
-玩迹 Playtrace CLI 0.2.0 — 在本机主动调用的云端档案工具
+玩迹 Playtrace CLI 0.3.0 — 在本机主动调用的云端档案工具
 
-playtrace auth login                 交互输入邀请码（不回显），会话保存在 macOS 钥匙串
+playtrace auth login                 在系统浏览器使用 Google 账号登录，会话保存在 macOS 钥匙串
 playtrace auth status                查看当前会话
 playtrace auth logout                撤销此 CLI 会话
 playtrace games list [--search 名称]  JSON 列表（最多 1000 条）
@@ -71,7 +71,7 @@ func resourceID(_ args: Arguments) throws -> String {
     static func main() async {
         do { try await run() }
         catch {
-            // Never log request headers, session tokens, or invitation input.
+            // Never log request headers, session tokens, or OAuth credentials.
             let data = try? JSONSerialization.data(withJSONObject: ["error": error.localizedDescription])
             FileHandle.standardError.write((data ?? Data("操作失败".utf8)) + Data("\n".utf8))
             exit(1)
@@ -80,7 +80,7 @@ func resourceID(_ args: Arguments) throws -> String {
     static func run() async throws {
         let raw = Array(CommandLine.arguments.dropFirst())
         if raw.isEmpty || raw == ["help"] || raw == ["--help"] { print(help); return }
-        if raw == ["--version"] { print("playtrace 0.2.0"); return }
+        if raw == ["--version"] { print("playtrace 0.3.0"); return }
         let args = try Arguments(raw)
         let client = APIClient(account: "cli")
         let command = args.positional.first ?? ""
@@ -88,15 +88,13 @@ func resourceID(_ args: Arguments) throws -> String {
             try args.validate(count: 2)
             switch args.positional[1] {
             case "login":
-                guard isatty(STDIN_FILENO) == 1, let ptr = getpass("玩迹数字邀请码（输入不回显）: ") else {
-                    throw PlaytraceError("请在自己的终端交互执行 auth login；不接受命令参数、环境变量或管道中的邀请码。")
+                guard isatty(STDIN_FILENO) == 1 else {
+                    throw PlaytraceError("请在自己的终端交互执行 auth login，并在浏览器授权 Google 账号。")
                 }
-                let code = String(cString: ptr)
-                memset(ptr, 0, strlen(ptr))
-                guard code.range(of: "^[0-9]{12}$", options: .regularExpression) != nil else { throw PlaytraceError("邀请码应为 12 位数字。") }
-                // Retire this client's previous session before issuing a replacement.
-                if try client.store.read() != nil { _ = try await client.json("/access/exit", method: "POST", body: [:]) }
-                _ = try await client.json("/access/verify", method: "POST", body: ["code": code])
+                try await client.loginWithGoogle(client: "cli") { code in
+                    FileHandle.standardError.write(Data("请在系统浏览器完成 Google 登录。核对本次校验码：\(code)\n等待最多 5 分钟，按 Ctrl+C 取消。\n".utf8))
+                    return true
+                }
                 try output(await client.json("/me"))
             case "status": try output(await client.json("/me"))
             case "logout": try output(await client.json("/access/exit", method: "POST", body: [:]))

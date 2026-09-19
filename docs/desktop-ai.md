@@ -12,7 +12,7 @@ npm run desktop:build
 npm run desktop:test
 ```
 
-输出 `artifacts/Playtrace.app`、`artifacts/playtrace`、`artifacts/Playtrace-0.2.0-arm64.dmg` 与校验值。支持 Apple Silicon，macOS 13+。DMG 内将 App 拖入 Applications，运行 `Install CLI.command` 安装 CLI。也可以手动安装到个人目录：
+输出 `artifacts/Playtrace.app`、`artifacts/playtrace`、`artifacts/Playtrace-0.3.0-arm64.dmg` 与校验值。支持 Apple Silicon，macOS 13+。DMG 内将 App 拖入 Applications，运行 `Install CLI.command` 安装 CLI。也可以手动安装到个人目录：
 
 ```sh
 mkdir -p ~/Applications ~/.local/bin
@@ -23,7 +23,7 @@ install -m 755 artifacts/playtrace ~/.local/bin/playtrace
 
 本地构建采用 ad-hoc 签名与 Hardened Runtime；桌面 App 启用 App Sandbox、出站网络和用户选中文件的只读权限。未完成 Developer ID 签名和 Apple 公证，不作为已公证的公众发行包。对其他用户分发前需用自己的 Apple Developer ID 证书签名并提交公证，不能要求关闭 Gatekeeper。
 
-首次登录在自己的终端输入邀请码，不回显。App、CLI、浏览器登录状态独立；各自持有服务端校验的最长 7 天会话，App/CLI 凭据只保存在 macOS 钥匙串。CLI 可在 App 未启动时使用。会话不是权限缩小的个人访问令牌，目前仍有整个共享档案的管理权限。
+首次运行 `playtrace auth login`，核对终端与系统浏览器的校验码，再使用已授权的 Google 账号登录。Mac App 点击 Google 登录按钮执行相同的浏览器授权。授权最多等待 5 分钟，CLI 可按 Ctrl+C 取消。App、CLI、浏览器登录状态独立；各自持有服务端校验的最长 7 天会话，App/CLI 凭据只保存在 macOS 钥匙串。CLI 可在 App 未启动时使用。会话不是权限缩小的个人访问令牌，目前仍有整个共享档案的管理权限。
 
 ## 在 Codex 中使用
 
@@ -78,10 +78,11 @@ Mac 内置界面 → 受限原生 HTTP 通道 ─┐
 手机网页 → 同源 API ─────────────┘
 ```
 
-- Native API 固定 HTTPS 源，拒绝重定向，只允许管理邀请码、游戏、主题和图片路由。不暴露凭据、文件系统或命令执行给界面。
+- Native API 固定 HTTPS 源，拒绝重定向，只允许 Google 登录、退出、游戏、主题和图片路由。不暴露凭据、文件系统或命令执行给界面。
+- Google 登录在系统浏览器完成。授权凭据只由原生层处理，网页内容不能调用授权领取接口或读取会话。
 - WKWebView 加载安装包内的资源。只接受该本地源主框架的消息；外部链接在系统浏览器打开。CSP 限制远程脚本、iframe 和表单提交。
 - CLI 只把结构化数据发给固定接口。服务器响应不会被本地工具执行。用户主动把资料交给 Codex 时，仍需将其作为不可信数据处理。
-- 后端继续校验邀请码、字段、记录版本和读写权限。没有放宽 CORS，也不把 Supabase 管理密钥放进安装包、CLI 或提示词。
+- 后端校验 Google 账号权限、字段、记录版本和读写权限。没有放宽 CORS，也不把 Supabase 管理密钥放进安装包、CLI 或提示词。
 - 所有 `/api/jobs`、`/api/agents`、`/api/bridge` 路由在认证、访问数据库之前拒绝。不得恢复网页 → 本机 Codex 的自动通道。
 
 数据库历史设备、任务及权限未改变。部署回滚也必须保留旧通道的拒绝规则。旧设备令牌不能用于 CLI 登录。未来社区版需要独立身份、用户数据归属和可撤销的权限范围令牌。

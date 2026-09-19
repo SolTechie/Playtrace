@@ -1,4 +1,4 @@
-import { apiFetch } from './transport';
+import { apiFetch, isDesktop } from './transport';
 import { gameInputSchema, type Game } from '../../shared/schema';
 import { yearOnly } from '../../shared/release-year';
 
@@ -40,10 +40,17 @@ export function accessChanged() {
     channel.close();
   }
 }
-export async function enterManagement(code: string) {
-  const result = await api('/access/verify', { method: 'POST', body: JSON.stringify({ code }) });
-  accessChanged();
-  return result;
+export async function enterManagement() {
+  if (isDesktop) {
+    await api('/access/google/login', { method: 'POST', body: '{}' });
+    accessChanged();
+    return;
+  }
+  const result = await api<{ url: string }>('/access/google/start', {
+    method: 'POST',
+    body: JSON.stringify({ returnTo: location.pathname + location.search }),
+  });
+  location.assign(result.url);
 }
 export async function leaveManagement() {
   await api('/access/exit', { method: 'POST', body: '{}' });

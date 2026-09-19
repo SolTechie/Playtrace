@@ -5,7 +5,7 @@
 1. 创建项目，保存项目 URL 与服务端 secret key。数据库密码只用于迁移，不放入网页或 Worker。
 2. 从 Supabase 数据库设置下载根证书，配置被 Git 忽略的 `.env.database`：`SUPABASE_DB_HOST`、`SUPABASE_DB_USER`、`SUPABASE_DB_PASSWORD`、`SUPABASE_DB_CA`（证书路径）。运行 `npm run db:migrate` 按文件顺序应用全部迁移并记录版本。也可通过 Supabase CLI 应用所有迁移。旧版只执行过初始迁移的项目会被识别，后续迁移不会重复导入游戏。
 3. 将 `.dev.vars.example` 复制为 `.dev.vars`，`.env.local.example` 复制为 `.env.local`，各填入 `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`。前者用于本地 Worker，后者用于本地维护脚本。
-4. 执行 `npm run invite:create` 生成一个随机 12 位数字管理邀请码（可能以 0 开头）。数据库仅保存 PBKDF2-SHA256 哈希（100,000 次迭代）和随机 16 字节盐。明文保存在权限 0600、Git 忽略的 `.env.invite`，脚本不会打印或覆盖已有邀请码。无需建立 Supabase Auth 账号，也无需额外的 Worker 签名密钥。
+4. 按 [Google 登录配置](google-login.md) 创建 OAuth 客户端并启用 Supabase Google 提供商。确认管理邮箱后运行 `npm run auth:setup -- --email owner@example.com --apply`。Google 迁移会撤销全部旧邀请码和旧会话，正式环境需先完成 Google 配置，再协调迁移、账号授权和部署。
 5. 如需导入本地资料，运行：
 
 ```sh
@@ -15,23 +15,17 @@ npm run data:import
 
 导入使用稳定 ID，已存在的游戏会跳过，保留网站上的编辑。上传支持重试，失败后可以重新执行。原始文件不会被改写。
 
-## 邀请码管理
+## Google 管理账号
 
-网页点击「管理档案」，输入 `.env.invite` 中的 `PLAYTRACE_INVITE_CODE` 即可编辑游戏、上传图片与管理主题。普通访客只浏览公开内容。邀请码是管理凭据，只提供给允许修改整个档案库的人。
+网页点击「管理档案」，使用后端 `google_accounts` 中已授权的 Google 账号登录。朋友无需登录即可浏览公开内容。当前仍是共享档案库，不开放任意用户注册管理权限。授权账号首次登录绑定 Google subject 与 Supabase 用户，之后不能仅凭相同邮箱接管。
 
-验证完全在 Worker 与数据库之间完成，客户端不保存或比对邀请码。每个 IP 在 15 分钟内最多尝试 10 次，格式错误也计数。验证后设置随机 256 位管理会话，数据库仅保存会话 SHA-256 摘要；Cookie 为 HttpOnly、Secure、SameSite=Strict，最长有效 7 天。写入操作还校验请求 Origin。
-
-在 Supabase SQL Editor 中按 `.env.invite` 的 `PLAYTRACE_INVITE_ID` 停用邀请码：
+账号管理、回调地址、Mac/CLI 授权和完整发布顺序见 [Google 登录配置](google-login.md)。停用账号后，其网页、App、CLI 会话立即失效：
 
 ```sql
-update public.management_invites
-set revoked_at = now()
-where id = '<PLAYTRACE_INVITE_ID>';
+update public.google_accounts set revoked_at=now() where email='owner@example.com';
 ```
 
-停用后，该邀请码建立的全部网页会话立即无法通过后端校验；也可以用 `expires_at` 设置到期时间。已经签发的图片链接在短期到期前仍有效。网页任务与电脑配对接口已经停用，旧设备令牌不能访问该通道。
-
-如需换码，先停用旧码，将 `.env.invite` 移到私密备份，再执行 `npm run invite:create`。目前适用于个人档案，最多同时启用 10 个邀请码；后端超过该数会拒绝验证，应先停用多余邀请码。现有账号权限已移除，原游戏、主题和任务归属由迁移保留。
+数据库只保存随机会话的 SHA-256 摘要，最长 7 天。Cookie 为 HttpOnly、Secure、SameSite=Strict；写操作校验 Origin。原档案、图片和历史 AI 记录保留，旧远程任务接口始终停用。
 
 ## Cloudflare Workers
 
@@ -63,4 +57,4 @@ GitHub Actions 会在提交和 PR 时执行测试与构建；当前不自动发�
 
 ## 验证范围
 
-自动检查覆盖邀请码慢哈希、限流、会话退出/过期/撤销、跨站防护、输入、统计、PostgreSQL 权限、公开 API 配置和图片引用。停用回归检查覆盖全部旧任务 / 配对 / 领取 / 回传路径、旧凭证和本机启动命令。历史数据库迁移仍保留其测试。可选 WebMCP 搜索接口仅用于游戏搜索。
+自动检查覆盖 Google PKCE/状态绑定、管理账号名单、一次性桌面授权、会话退出/过期/撤销、跨站防护、输入、统计、PostgreSQL 权限、公开 API 配置和图片引用。停用回归检查覆盖全部旧任务 / 配对 / 领取 / 回传路径、旧凭证和本机启动命令。历史数据库迁移仍保留其测试。可选 WebMCP 搜索接口仅用于游戏搜索。

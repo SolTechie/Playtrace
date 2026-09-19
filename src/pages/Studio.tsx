@@ -90,7 +90,7 @@ export default function Studio() {
           {isDesktop
             ? '在「帮助 → 打开 CLI 使用指南」查看安装步骤。'
             : 'CLI 随 Mac 安装包提供，请回到自己的电脑操作。'}{' '}
-          首次在终端输入邀请码；会话保存在 macOS 钥匙串，最长 7 天。
+          首次运行登录命令，在浏览器中使用 Google 账号授权；会话保存在 macOS 钥匙串，最长 7 天。
         </p>
         <pre>{`~/.local/bin/playtrace auth login
 ~/.local/bin/playtrace games list --search "哈迪斯"

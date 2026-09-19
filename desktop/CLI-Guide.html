@@ -1,12 +1,12 @@
 <!doctype html><html lang="zh-CN"><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>玩迹 · Mac 与 CLI</title>
 <style>html{background:#101214;color:#e9ebed;font:16px/1.9 -apple-system,BlinkMacSystemFont,sans-serif}body{max-width:780px;margin:60px auto;padding:0 24px}h1,h2{line-height:1.4}h1{font-size:38px}h2{margin-top:38px}a{color:#b2ed75}pre{padding:20px;background:#191d20;border:1px solid #2b3034;border-radius:12px;overflow:auto;color:#b2ed75;font-size:13px}code{font-size:.9em}small{color:#91999f}</style>
 <h1>玩迹 Playtrace <small>for Mac</small></h1><p>记录每一次游玩。Mac、手机和本地 CLI 共用云端档案。</p>
-<h2>安装桌面应用</h2><p>打开 DMG，将 Playtrace 拖入 Applications。支持 Apple Silicon（M 系列芯片），macOS 13 或更新版本。第一版为本机开发签名，尚未完成 Apple Developer ID 签名与公证，供这台 Mac 本地安装测试；面向其他用户分发前需要完成 Apple 签名流程。</p><p>浏览游戏无需登录；进入「管理档案」输入数字邀请码，即可新增、编辑、删除和上传图片。登录会话保存在 macOS 钥匙串，最长 7 天。需要联网使用，不提供离线编辑。</p>
+<h2>安装桌面应用</h2><p>打开 DMG，将 Playtrace 拖入 Applications。支持 Apple Silicon（M 系列芯片），macOS 13 或更新版本。第一版为本机开发签名，尚未完成 Apple Developer ID 签名与公证，供这台 Mac 本地安装测试；面向其他用户分发前需要完成 Apple 签名流程。</p><p>浏览游戏无需登录；进入「管理档案」，核对本次校验码并在系统浏览器使用已授权的 Google 账号登录，即可新增、编辑、删除和上传图片。登录会话保存在 macOS 钥匙串，最长 7 天。需要联网使用，不提供离线编辑。</p>
 <h2>安装本地 CLI</h2><p>在安装磁盘中运行 <code>Install CLI.command</code>，或在终端执行：</p>
 <pre>mkdir -p ~/.local/bin
 install -m 755 /Applications/Playtrace.app/Contents/Helpers/playtrace ~/.local/bin/playtrace
 ~/.local/bin/playtrace auth login</pre>
-<p>邀请码在终端交互输入，不回显，也不应放进 Codex 提示词或命令参数。CLI 与 App 的登录状态独立，退出一个不会退出另一个。终端若找不到 <code>playtrace</code>，使用上述完整路径即可。</p>
+<p>登录命令会打开系统浏览器；比较终端与网页上的校验码后，选择已授权的 Google 账号。无需在终端输入 Google 密码。每次登录最多等待 5 分钟，可按 Ctrl+C 取消。CLI 与 App 的登录状态独立，退出一个不会退出另一个。终端若找不到 <code>playtrace</code>，使用上述完整路径即可。</p>
 <h2>交给 Codex</h2><p>在自己的 Codex 对话中发送：</p>
 <pre>本机玩迹 CLI 在 ~/.local/bin/playtrace。
 请先读 help 和 schema games，查找我要修改的记录。

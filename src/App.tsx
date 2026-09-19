@@ -79,6 +79,7 @@ export default function App() {
     [themes, setThemes] = useState<Theme[]>([]),
     [configured, setConfigured] = useState(false),
     [admin, setAdmin] = useState(false),
+    [accountEmail, setAccountEmail] = useState<string | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState(''),
     [login, setLogin] = useState(false),
@@ -87,11 +88,15 @@ export default function App() {
     const [gs, ts, me] = await Promise.all([
       api<Game[]>('/games'),
       api<Theme[]>('/themes'),
-      api<{ admin: boolean }>('/me').catch(() => ({ admin: false })),
+      api<{ admin: boolean; email: string | null }>('/me').catch(() => ({
+        admin: false,
+        email: null,
+      })),
     ]);
     setGames(gs);
     setThemes(ts);
     setAdmin(me.admin);
+    setAccountEmail(me.email);
     setError('');
   }, []);
   useEffect(() => {
@@ -183,8 +188,8 @@ export default function App() {
               </Link>
               <button
                 className="icon-button"
-                title="退出管理"
-                aria-label="退出管理"
+                title={accountEmail ? `${accountEmail} · 退出登录` : '退出登录'}
+                aria-label="退出登录"
                 onClick={() =>
                   void leaveManagement()
                     .then(refresh)
@@ -249,70 +254,51 @@ export default function App() {
             </button>
           </div>
         )}
-        {login && <InviteModal onClose={() => setLogin(false)} />}
+        {login && <GoogleLoginModal onClose={() => setLogin(false)} />}
       </div>
     </Context.Provider>
   );
 }
-function InviteModal({ onClose }: { onClose: () => void }) {
+function GoogleLoginModal({ onClose }: { onClose: () => void }) {
   const { configured, refresh, notify } = useStore();
-  const [code, setCode] = useState(''),
-    [error, setError] = useState(''),
+  const [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   return (
-    <Modal title="输入管理邀请码" onClose={onClose}>
+    <Modal title="登录玩迹" onClose={onClose}>
       {configured ? (
         <form
           className="login-form"
-          onSubmit={async (e) => {
-            e.preventDefault();
+          onSubmit={async (event) => {
+            event.preventDefault();
             setBusy(true);
             setError('');
             try {
-              await enterManagement(code);
+              await enterManagement();
               await refresh();
-              notify('已进入管理模式');
+              notify('已使用 Google 账号登录');
               onClose();
-            } catch (e) {
-              setError((e as Error).message);
+            } catch (error) {
+              setError((error as Error).message);
             } finally {
               setBusy(false);
             }
           }}
         >
-          <p className="muted">输入邀请码后，可以编辑游戏、管理游戏图片和主题。</p>
-          <label>
-            数字邀请码
-            <input
-              type="password"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              pattern="[0-9]{12}"
-              minLength={12}
-              maxLength={12}
-              required
-              autoFocus
-              placeholder="输入 12 位数字"
-              value={code}
-              onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
-            />
-          </label>
+          <p className="muted">使用已授权的 Google 账号，管理游戏记录、图片和主题。</p>
           {error && (
             <p role="alert" className="error-message">
               {error}
             </p>
           )}
-          <button disabled={busy || code.length !== 12} className="button primary">
-            {busy ? <LoaderCircle size={18} className="spin" /> : <LogIn size={18} />}进入管理模式
+          <button disabled={busy} className="button primary" type="submit">
+            {busy ? <LoaderCircle size={18} className="spin" /> : <LogIn size={18} />}
+            {busy ? '正在等待 Google 登录…' : '使用 Google 账号登录'}
           </button>
+          <p className="muted">公开游戏无需登录即可浏览。登录状态最长保留 7 天。</p>
         </form>
       ) : (
         <div className="setup-message">
-          <p>当前是本地预览。连接云端并配置邀请码后，即可保存和管理游戏。</p>
-          <Link className="button primary" to="/studio" onClick={onClose}>
-            <Sparkles size={16} />
-            查看桌面 AI 指南
-          </Link>
+          <p>当前是本地预览。连接云端并配置 Google 登录后，即可保存和管理游戏。</p>
         </div>
       )}
     </Modal>
@@ -779,9 +765,9 @@ function EditorPage() {
   const g = games.find((g) => g.id === id);
   if (configured && !admin)
     return (
-      <Empty title="输入邀请码后管理游戏">
+      <Empty title="登录后管理游戏">
         <button className="button primary" onClick={login}>
-          输入邀请码
+          Google 账号登录
         </button>
       </Empty>
     );

@@ -27,7 +27,7 @@ describe('public API boundaries', () => {
       SUPABASE_PUBLISHABLE_KEY: 'public',
       SUPABASE_SERVICE_ROLE_KEY: 'server',
     });
-    expect(await response.json()).toEqual({ admin: false, expiresAt: null });
+    expect(await response.json()).toEqual({ admin: false, email: null, expiresAt: null });
   });
   it('rejects every retired AI route before credentials or database access', async () => {
     const network = vi
@@ -62,7 +62,7 @@ describe('public API boundaries', () => {
               headers: {
                 Origin: 'https://playtrace.test',
                 Authorization: `Bearer pt_${'1'.repeat(72)}`,
-                Cookie: `__Host-playtrace_session=ps_${'1'.repeat(64)}`,
+                Cookie: `__Host-playtrace_session=pg_${'1'.repeat(64)}`,
               },
             }),
             configured
@@ -80,6 +80,6 @@ describe('public API boundaries', () => {
   });
   it('advertises that remote AI is disabled without exposing credentials', async () => {
     const response = await worker.fetch(new Request('https://playtrace.test/api/config'), {});
-    expect(await response.json()).toEqual({ configured: false, access: 'invite', remoteAi: false });
+    expect(await response.json()).toEqual({ configured: false, access: 'google', remoteAi: false });
   });
 });

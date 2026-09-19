@@ -1,11 +1,11 @@
 import {
   AccessError,
-  verifyInvite,
   exitManagement,
   resolveManager,
   requireManager,
   requireSameOrigin,
 } from './access';
+import { googleAuthRoute } from './google-auth';
 import { signImages, stableImages } from './media';
 import { yearOnly } from '../shared/release-year';
 import { createClient } from '@supabase/supabase-js';
@@ -66,10 +66,18 @@ export default {
           // Older bridges exit on 403; 410 would leave them polling indefinitely.
           /^\/api\/bridge(?:\/|$)/.test(path) ? 403 : 410,
         );
+      if (path === '/api/access/verify')
+        return json(
+          {
+            code: 'INVITE_LOGIN_DISABLED',
+            error: '数字邀请码已停用，请使用 Google 账号登录并更新 Mac App / CLI。',
+          },
+          410,
+        );
       if (path === '/api/config')
         return json({
           configured: !!(env.SUPABASE_URL && env.SUPABASE_SERVICE_ROLE_KEY),
-          access: 'invite',
+          access: 'google',
           remoteAi: false,
         });
       if (path === '/api/health')
@@ -80,14 +88,18 @@ export default {
       if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY)
         throw new HttpError(503, '云端尚未连接，当前为本地浏览预览');
       const db = service(env);
-      if (path === '/api/access/verify' && request.method === 'POST')
-        return await verifyInvite(request, db);
+      const authResponse = await googleAuthRoute(request, db, env);
+      if (authResponse) return authResponse;
       if (path === '/api/access/exit' && request.method === 'POST')
         return await exitManagement(request, db);
       if (!['GET', 'HEAD'].includes(request.method)) requireSameOrigin(request);
       const manager = await resolveManager(request, db);
       if (path === '/api/me')
-        return json({ admin: !!manager, expiresAt: manager?.expiresAt || null });
+        return json({
+          admin: !!manager,
+          email: manager?.email || null,
+          expiresAt: manager?.expiresAt || null,
+        });
       const resource = path.match(/^\/api\/(games|themes)(?:\/([\w-]+))?$/);
       if (resource) {
         const [, table, id] = resource;

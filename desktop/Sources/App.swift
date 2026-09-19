@@ -24,6 +24,7 @@ final class BundleAssets: NSObject, WKURLSchemeHandler {
 
 final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
     let client = APIClient(account: "desktop")
+    private var signingIn = false
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
@@ -31,7 +32,7 @@ final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
               message.frameInfo.request.url?.scheme == "playtrace", message.frameInfo.request.url?.host == "app",
               let payload = message.body as? [String: Any],
               let path = payload["path"] as? String, let method = payload["method"] as? String,
-              Policy.allows(path, method: method) else { replyHandler(nil, "不允许的请求来源或操作。"); return }
+              Policy.allowsWeb(path, method: method) else { replyHandler(nil, "不允许的请求来源或操作。"); return }
         let encoded = payload["body"] as? String ?? ""
         guard encoded.count <= 16 * 1024 * 1024, let body = Data(base64Encoded: encoded) else {
             replyHandler(nil, "请求内容无效或过大。"); return
@@ -43,6 +44,22 @@ final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
         }
         Task { @MainActor in
             do {
+                if path == "/access/google/login" {
+                    guard !signingIn else { throw PlaytraceError("已有登录正在进行，请在浏览器完成。") }
+                    signingIn = true
+                    defer { signingIn = false }
+                    try await client.loginWithGoogle(client: "desktop") { code in
+                        let alert = NSAlert()
+                        alert.messageText = "使用 Google 账号登录玩迹"
+                        alert.informativeText = "本次校验码：\(code)\n请确认浏览器显示相同的校验码，再授权此 Mac App。"
+                        alert.addButton(withTitle: "打开浏览器登录")
+                        alert.addButton(withTitle: "取消")
+                        return alert.runModal() == .alertFirstButtonReturn
+                    }
+                    let response = try await client.request("/me")
+                    replyHandler(["status": response.status, "body": response.data.base64EncodedString()], nil)
+                    return
+                }
                 let response = try await client.request(path, method: method, body: body.isEmpty ? nil : body, contentType: type)
                 // Credentials and response headers never enter the web content process.
                 replyHandler(["status": response.status, "body": response.data.base64EncodedString()], nil)
@@ -124,7 +141,7 @@ final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
     @objc func newGame() { navigate("/games/new") }
     @objc func refresh() { webView.reload() }
     @objc func about() {
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "玩迹 Playtrace", .applicationVersion: "0.2.0",
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "玩迹 Playtrace", .applicationVersion: "0.3.0",
                                                     .credits: NSAttributedString(string: "记录每一次游玩。\nMac、手机与本地 CLI，共用你的云端游戏档案。")])
     }
     @objc func cliHelp() {
