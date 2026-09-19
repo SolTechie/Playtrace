@@ -27,8 +27,23 @@ beforeAll(async () => {
     .filter((f) => f.endsWith('.sql'))
     .sort()
     .slice(1);
-  for (const name of migrations)
+  for (const name of migrations) {
     await db.exec(await readFile('supabase/migrations/' + name, 'utf8'));
+    if (name === '202609180001_google_access.sql') {
+      await db.query(
+        `insert into public.google_accounts(id,manager_id,email,google_subject,auth_user_id) values($1,$2,'existing@example.com','existing-google-subject',$1)`,
+        [other, owner],
+      );
+      await db.query(`insert into public.google_sessions(token_hash,account_id) values($1,$2)`, [
+        'd'.repeat(64),
+        other,
+      ]);
+      await db.query(
+        `insert into public.google_oauth_flows(state_hash,verifier,return_path) values($1,'legacy','/')`,
+        ['e'.repeat(64)],
+      );
+    }
+  }
   await db.query(
     `insert into public.google_accounts(id,manager_id,email) values($1,$1,'owner@example.com')`,
     [owner],
@@ -48,12 +63,23 @@ describe.sequential('Google access migration and atomic grants', () => {
     ).toHaveLength(1);
     expect(
       (
-        await db.query('select * from public.bind_google_account($1,$2,$3)', [
+        await db.query('select * from public.bind_google_account($1,$2)', [
           'stranger@example.com',
           'stranger',
-          other,
         ])
       ).rows,
+    ).toHaveLength(0);
+  });
+  it('preserves existing Google bindings and sessions while removing legacy flows', async () => {
+    expect(
+      (await db.query('select google_subject from public.google_accounts where id=$1', [other]))
+        .rows,
+    ).toEqual([{ google_subject: 'existing-google-subject' }]);
+    expect(
+      (await db.query('select * from public.resolve_google_session($1)', ['d'.repeat(64)])).rows,
+    ).toHaveLength(1);
+    expect(
+      (await db.query('select * from public.consume_google_flow($1)', ['e'.repeat(64)])).rows,
     ).toHaveLength(0);
   });
   it('prevents browser roles reading authentication tables or granting permissions', async () => {
@@ -67,10 +93,9 @@ describe.sequential('Google access migration and atomic grants', () => {
       ])
         await expect(db.query('select * from public.' + table)).rejects.toThrow();
       await expect(
-        db.query('select * from public.bind_google_account($1,$2,$3)', [
+        db.query('select * from public.bind_google_account($1,$2)', [
           'owner@example.com',
           'hijack',
-          other,
         ]),
       ).rejects.toThrow();
       await expect(
@@ -102,22 +127,31 @@ describe.sequential('Google access migration and atomic grants', () => {
       (await db.query('select * from public.resolve_management_session($1)', [session])).rows,
     ).toHaveLength(0);
   });
-  it('pins the immutable Google subject and Supabase user on the first authorized login', async () => {
+  it('pins the immutable Google subject on the first authorized login', async () => {
     await as('service_role');
-    const bind = (subject: string, id = owner) =>
-      db.query('select * from public.bind_google_account($1,$2,$3)', [
-        'owner@example.com',
-        subject,
-        id,
-      ]);
+    const bind = (subject: string) =>
+      db.query('select * from public.bind_google_account($1,$2)', ['owner@example.com', subject]);
     expect((await bind('google-owner')).rows).toHaveLength(1);
     expect((await bind('google-owner')).rows).toHaveLength(1);
     expect((await bind('different-subject')).rows).toHaveLength(0);
-    expect((await bind('google-owner', other)).rows).toHaveLength(0);
+    // Retiring a Supabase Auth user cannot cascade-delete Playtrace ownership.
+    await as('postgres');
+    await db.query('delete from auth.users where id=$1', [owner]);
+    await as('service_role');
+    expect((await bind('google-owner')).rows).toHaveLength(1);
+    expect((await db.query('select * from public.games')).rows).toHaveLength(1);
+    await expect(db.query('select auth_user_id from public.google_accounts')).rejects.toThrow();
+    await expect(
+      db.query('select * from public.bind_google_account($1,$2,$3)', [
+        'owner@example.com',
+        'google-owner',
+        owner,
+      ]),
+    ).rejects.toThrow();
   });
   it('consumes only unexpired OAuth state, exactly once', async () => {
     await db.query(
-      'insert into public.google_oauth_flows(state_hash,verifier,return_path) values($1,$2,$3)',
+      `insert into public.google_oauth_flows(state_hash,verifier,return_path,nonce,redirect_uri) values($1,$2,$3,'nonce','https://playtrace.test/api/access/google/callback')`,
       [state, 'verifier', '/'],
     );
     expect(
@@ -130,7 +164,7 @@ describe.sequential('Google access migration and atomic grants', () => {
       (await db.query('select * from public.consume_google_flow($1)', [state])).rows,
     ).toHaveLength(0);
     await db.query(
-      "insert into public.google_oauth_flows(state_hash,verifier,return_path,expires_at) values($1,'verifier','/',now()-interval '1 minute')",
+      "insert into public.google_oauth_flows(state_hash,verifier,return_path,expires_at,nonce,redirect_uri) values($1,'verifier','/',now()-interval '1 minute','nonce','https://playtrace.test/api/access/google/callback')",
       [state],
     );
     expect(
@@ -178,10 +212,9 @@ describe.sequential('Google access migration and atomic grants', () => {
     ).toHaveLength(0);
     expect(
       (
-        await db.query('select * from public.bind_google_account($1,$2,$3)', [
+        await db.query('select * from public.bind_google_account($1,$2)', [
           'owner@example.com',
           'google-owner',
-          owner,
         ])
       ).rows,
     ).toHaveLength(0);

@@ -1,41 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { googleAuthRoute, safeReturnPath, verifiedGoogleIdentity } from '../worker/google-auth';
+import { googleAuthRoute, safeReturnPath } from '../worker/google-auth';
 import { sha256 } from '../worker/access';
-const mock = vi.hoisted(() => ({
-  exchange: vi.fn(),
-  getUser: vi.fn(),
-  signOut: vi.fn(),
-  options: null as any,
-}));
-vi.mock('@supabase/supabase-js', () => ({
-  createClient: (_url: string, _key: string, options: unknown) => {
-    mock.options = options;
-    return {
-      auth: { exchangeCodeForSession: mock.exchange, getUser: mock.getUser, signOut: mock.signOut },
-    };
-  },
+const mock = vi.hoisted(() => ({ exchange: vi.fn() }));
+vi.mock('../worker/google-provider', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../worker/google-provider')>()),
+  exchangeGoogleCode: mock.exchange,
 }));
 const origin = 'https://playtrace.test';
 const env = {
-  SUPABASE_URL: 'https://example.supabase.co',
-  SUPABASE_SERVICE_ROLE_KEY: 'server-secret',
+  GOOGLE_CLIENT_ID: 'test-client.apps.googleusercontent.com',
+  GOOGLE_CLIENT_SECRET: 'server-secret',
+  GOOGLE_REDIRECT_URI: origin + '/api/access/google/callback',
 };
 const state = '1'.repeat(64);
+const nonce = '4'.repeat(64);
 const id = '11111111-1111-4111-a111-111111111111';
-const user = {
-  id,
-  email_confirmed_at: '2026-01-01',
-  identities: [
-    {
-      provider: 'google',
-      identity_data: {
-        email: 'owner@example.com',
-        email_verified: true,
-        sub: 'google-subject',
-      },
-    },
-  ],
-} as any;
 function database(
   options: {
     flow?: unknown;
@@ -55,6 +34,8 @@ function database(
           : [
               options.flow || {
                 verifier: 'v'.repeat(64),
+                nonce,
+                redirect_uri: env.GOOGLE_REDIRECT_URI,
                 return_path: '/insights',
                 native_id: null,
               },
@@ -107,14 +88,11 @@ const callback = (params = `state=${state}&code=auth-code`, cookie = state) =>
 beforeEach(() => {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => Response.json({ external: { google: true } })),
+    vi.fn(() => {
+      throw new Error('Unexpected network request');
+    }),
   );
-  mock.exchange.mockResolvedValue({
-    data: { session: { access_token: 'verified-access-token' } },
-    error: null,
-  });
-  mock.getUser.mockResolvedValue({ data: { user }, error: null });
-  mock.signOut.mockResolvedValue({ error: null });
+  mock.exchange.mockResolvedValue({ email: 'owner@example.com', subject: 'google-subject' });
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -143,40 +121,34 @@ describe('Google OAuth and native login', () => {
     ))!;
     const { url } = await response.json();
     const parsed = new URL(url);
-    expect(parsed.origin).toBe(env.SUPABASE_URL);
-    expect(parsed.searchParams.get('code_challenge_method')).toBe('s256');
+    expect(parsed.origin).toBe('https://accounts.google.com');
+    expect(parsed.searchParams.get('redirect_uri')).toBe(env.GOOGLE_REDIRECT_URI);
+    expect(parsed.searchParams.get('client_id')).toBe(env.GOOGLE_CLIENT_ID);
+    expect(parsed.searchParams.get('code_challenge_method')).toBe('S256');
     expect(parsed.searchParams.get('code_challenge')).toHaveLength(43);
     const record = db.writes.find(
       (r: any) => r.table === 'google_oauth_flows' && r.method === 'insert',
     ).value;
     expect(record.return_path).toBe('/');
     expect(url).not.toContain(record.verifier);
-    expect(url).not.toContain(env.SUPABASE_SERVICE_ROLE_KEY);
-    const sentState = new URL(parsed.searchParams.get('redirect_to')!).searchParams.get('state')!;
+    expect(url).not.toContain(env.GOOGLE_CLIENT_SECRET);
+    const sentState = parsed.searchParams.get('state')!;
     expect(record.state_hash).toBe(await sha256(sentState));
+    expect(record.nonce).toBe(parsed.searchParams.get('nonce'));
+    expect(record.nonce).not.toBe(sentState);
+    expect(record.redirect_uri).toBe(env.GOOGLE_REDIRECT_URI);
+    expect(fetch).not.toHaveBeenCalled();
     expect(response.headers.get('set-cookie')).toContain(
       `=${sentState}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300; Secure`,
     );
   });
-  it('rejects redirected Auth settings without forwarding the server key or creating a flow', async () => {
-    const fetchSettings = vi.fn(
-      async () =>
-        new Response(null, {
-          status: 302,
-          headers: { Location: 'https://other.example/settings' },
-        }),
-    );
-    vi.stubGlobal('fetch', fetchSettings);
-    const db = database();
-    await expect(googleAuthRoute(post('google/start'), db, env)).rejects.toMatchObject({
-      status: 503,
-    });
-    expect(fetchSettings).toHaveBeenCalledTimes(1);
-    expect(fetchSettings).toHaveBeenCalledWith(
-      env.SUPABASE_URL + '/auth/v1/settings',
-      expect.objectContaining({ redirect: 'manual' }),
-    );
-    expect(db.writes).toEqual([]);
+  it('refuses a host that does not match the configured callback', async () => {
+    await expect(
+      googleAuthRoute(post('google/start'), database(), {
+        ...env,
+        GOOGLE_REDIRECT_URI: 'https://other.test/api/access/google/callback',
+      }),
+    ).rejects.toMatchObject({ status: 503 });
   });
   it('refuses unconfigured Google, cross-site starts and oversized inputs', async () => {
     await expect(
@@ -185,13 +157,9 @@ describe('Google OAuth and native login', () => {
     await expect(
       googleAuthRoute(post('google/start', { value: 'a'.repeat(3000) }), database(), env),
     ).rejects.toMatchObject({ status: 413 });
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async () => Response.json({ external: { google: false } })),
-    );
-    await expect(googleAuthRoute(post('google/start'), database(), env)).rejects.toMatchObject({
-      status: 503,
-    });
+    await expect(
+      googleAuthRoute(post('google/start'), database(), { ...env, GOOGLE_CLIENT_SECRET: '' }),
+    ).rejects.toMatchObject({ status: 503 });
   });
   it('does not exchange a code with mismatched, missing or replayed browser state', async () => {
     for (const [request, db] of [
@@ -203,49 +171,30 @@ describe('Google OAuth and native login', () => {
     }
     expect(mock.exchange).not.toHaveBeenCalled();
   });
-  it('requires Google-owned verified identity data, not editable metadata', () => {
-    expect(verifiedGoogleIdentity(user).email).toBe('owner@example.com');
-    for (const bad of [
-      { ...user, identities: [] },
-      { ...user, email_confirmed_at: null },
-      {
-        ...user,
-        identities: [{ provider: 'email', identity_data: user.identities[0].identity_data }],
-      },
-      {
-        ...user,
-        identities: [
-          {
-            provider: 'google',
-            identity_data: { ...user.identities[0].identity_data, email_verified: false },
-          },
-        ],
-      },
-      {
-        ...user,
-        identities: [{ provider: 'google', identity_data: {} }],
-        user_metadata: user.identities[0].identity_data,
-      },
-    ])
-      expect(() => verifiedGoogleIdentity(bad)).toThrow();
+  it('rejects legacy or differently configured flows before exchanging a code', async () => {
+    for (const flow of [{ verifier: 'v' }, { nonce, redirect_uri: 'https://other.test/callback' }])
+      expect((await googleAuthRoute(callback(), database({ flow }), env))!.status).toBe(410);
+    expect(mock.exchange).not.toHaveBeenCalled();
   });
   it('binds verified subject and issues only an HttpOnly archive session', async () => {
     const db = database();
     const response = (await googleAuthRoute(callback(), db, env))!;
     expect(response.status).toBe(200);
-    expect(mock.getUser).toHaveBeenCalledWith('verified-access-token');
+    expect(mock.exchange).toHaveBeenCalledWith(
+      'auth-code',
+      'v'.repeat(64),
+      nonce,
+      expect.objectContaining({ clientId: env.GOOGLE_CLIENT_ID }),
+    );
     expect(db.rpc).toHaveBeenCalledWith('bind_google_account', {
       p_email: 'owner@example.com',
       p_subject: 'google-subject',
-      p_user_id: id,
     });
-    expect(mock.options.auth.storage.getItem('playtrace-oauth-code-verifier')).toBeNull();
     expect(response.headers.get('set-cookie')).toContain('__Host-playtrace_session=pg_');
     const text = await response.text();
     expect(text).toContain('/insights');
     expect(text).not.toContain('verified-access-token');
     expect(text).not.toContain('pg_');
-    expect(mock.signOut).toHaveBeenCalledWith({ scope: 'local' });
     expect(db.writes.find((r: any) => r.table === 'google_sessions').value.token_hash).toMatch(
       /^[a-f0-9]{64}$/,
     );
@@ -254,8 +203,10 @@ describe('Google OAuth and native login', () => {
     const db = database({ accounts: [] });
     expect((await googleAuthRoute(callback(), db, env))!.status).toBe(403);
     expect(db.writes).toEqual([]);
-    mock.getUser.mockResolvedValue({ data: { user: null }, error: new Error('bad token') });
-    expect((await googleAuthRoute(callback(), database(), env))!.status).toBe(401);
+    mock.exchange.mockRejectedValue(new Error('bad token'));
+    const failed = database();
+    expect((await googleAuthRoute(callback(), failed, env))!.status).toBe(503);
+    expect(failed.writes).toEqual([]);
   });
   it('does not set a management cookie when session storage fails', async () => {
     const response = (await googleAuthRoute(
@@ -281,7 +232,15 @@ describe('Google OAuth and native login', () => {
     expect(page.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
   });
   it('approves only the pending native request, without logging the browser into management', async () => {
-    const db = database({ flow: { verifier: 'v'.repeat(64), return_path: '/', native_id: id } });
+    const db = database({
+      flow: {
+        verifier: 'v'.repeat(64),
+        nonce,
+        redirect_uri: env.GOOGLE_REDIRECT_URI,
+        return_path: '/',
+        native_id: id,
+      },
+    });
     const response = (await googleAuthRoute(callback(), db, env))!;
     expect(response.status).toBe(200);
     expect(response.headers.get('set-cookie')).not.toContain('playtrace_session');

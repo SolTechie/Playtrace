@@ -20,17 +20,12 @@ if (!url || !key) {
 }
 const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
 try {
-  const response = await fetch(url + '/auth/v1/settings', {
-    headers: { apikey: key },
-    redirect: 'error',
-  });
-  if (!response.ok) throw new Error('Cannot read Supabase Auth settings.');
-  const settings = await response.json();
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const secret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI;
+  const configured = !!(clientId && secret && redirectUri);
   console.log(
-    JSON.stringify({
-      googleEnabled: !!settings.external?.google,
-      googleCallback: url + '/auth/v1/callback',
-    }),
+    JSON.stringify({ googleConfigured: configured, googleCallback: redirectUri || null }),
   );
   if (!email) process.exit(0);
   const { data: managers, error } = await db.from('archive_managers').select('id').limit(2);
@@ -42,8 +37,10 @@ try {
     console.log(JSON.stringify({ dryRun: true, email, managerId: managers[0].id }));
     process.exit(0);
   }
-  if (!settings.external?.google)
-    throw new Error('Enable Google in Supabase before granting access and deploying.');
+  if (!configured)
+    throw new Error(
+      'Configure GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI for the Worker before granting access.',
+    );
   const { data: existing, error: lookupError } = await db
     .from('google_accounts')
     .select('id,revoked_at')

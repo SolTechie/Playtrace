@@ -19,3 +19,6 @@ public/dev-data/
 
 artifacts/
 desktop/.build/
+
+# Supabase CLI generated state
+supabase/.temp/

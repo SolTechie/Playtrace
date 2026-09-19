@@ -5,14 +5,14 @@ import {
   requireManager,
   requireSameOrigin,
 } from './access';
-import { googleAuthRoute } from './google-auth';
+import { googleAuthRoute, type AuthEnv } from './google-auth';
 import { signImages, stableImages } from './media';
 import { yearOnly } from '../shared/release-year';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { gameInputSchema, themeInputSchema } from '../shared/schema';
 
-type Env = {
+type Env = AuthEnv & {
   SUPABASE_URL?: string;
   SUPABASE_SERVICE_ROLE_KEY?: string;
 };

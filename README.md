@@ -36,7 +36,7 @@ Mac / 手机 / 本地 CLI → Cloudflare Worker → Supabase
 ```sh
 npm ci
 cp .dev.vars.example .dev.vars
-# 在 .dev.vars 填入 Supabase 配置
+# 在 .dev.vars 填入 Supabase 数据库与 Google OAuth 服务端配置
 npm run dev
 ```
 
@@ -66,11 +66,11 @@ npm run build
 
 `resource/`、生成的游戏 JSON、图片、本地环境文件和 AI 临时文件全部被 Git 忽略。Cloudflare 只收到构建后的程序；游戏记录和上传图片保存在 Supabase。
 
-浏览器通过 Supabase 的 Google OAuth 完成身份验证。Worker 校验一次性状态、PKCE、Google 已验证邮箱和后端账号名单，然后签发自己的管理会话。首次登录绑定不可变 Google subject 和 Supabase 用户 ID；不会把任何新登录者自动设为管理员。OAuth 密钥保存在 Supabase，服务端密钥只用于 Worker 与维护工具。
+浏览器跳转到 Google，Google 直接回调 Cloudflare Worker。Worker 校验一次性状态、PKCE、ID token 签名、issuer、audience、nonce、有效期、已验证邮箱和后端账号名单，然后签发自己的管理会话。首次登录绑定不可变 Google subject，不自动授予新用户管理权限。Google OAuth 密钥保存在 Cloudflare 加密配置中；Supabase 仅提供数据库与图片存储，不参与身份验证。
 
-管理会话使用 HttpOnly、Secure、SameSite=Strict Cookie，最长 7 天；数据库仅保存会话摘要。退出、到期或停用账号立即失效。OAuth 临时 Cookie 使用 SameSite=Lax 以支持跨站返回，5 分钟失效；OAuth 状态只可使用一次。每个 IP 的登录发起每 15 分钟最多 10 次。普通 Supabase Auth 用户无管理表或档案写权限。数字邀请码、旧会话及兑换接口已停用。
+管理会话使用 HttpOnly、Secure、SameSite=Strict Cookie，最长 7 天；数据库仅保存会话摘要。退出、到期或停用账号立即失效。OAuth 临时 Cookie 使用 SameSite=Lax 以支持跨站返回，5 分钟失效；OAuth 状态只可使用一次。每个 IP 的登录发起每 15 分钟最多 10 次。浏览器不能直接读取管理表或写入档案。数字邀请码、旧会话及兑换接口已停用。
 
-配置步骤见 [Google 登录接入](docs/google-login.md)。部署前必须启用 Google、确认管理员邮箱，并协调数据库迁移及客户端更新；旧版 Mac/CLI 无法再登录。
+配置步骤见 [Google 登录接入](docs/google-login.md)。从 Supabase Auth 切换时先应用兼容迁移，部署 Worker 后再清理旧配置和身份外键。已有 Playtrace 管理会话和 0.3.0 Mac/CLI 可继续使用。
 
 图片通过游戏表单上传。已保存的 AI 图片和游戏记录继续保留。新游戏记录不收录资料来源列表。
 

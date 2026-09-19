@@ -1,52 +1,67 @@
-# Google 账号登录
+# Google 登录：Cloudflare 直接验证
 
-当前仍是单个共享档案：只有预先授权的 Google 账号能管理，访客继续浏览公开游戏。此更新替换数字邀请码，不创建社区或每人独立游戏库。
+Google 负责验证用户身份，Cloudflare Worker 负责验证 Google 的登录结果、管理账号授权和签发 Playtrace 会话。Supabase 只保存业务数据、图片和 Playtrace 自己的会话表，不再使用 Supabase Auth。
 
-## 需要项目所有者准备
+## Google Cloud 与服务端配置
 
-- 管理现有档案的 Google 邮箱，不从当前浏览器账号或 Git 配置推断。
-- 在 Google Cloud 的 Google Auth Platform 建立 Playtrace 项目、External 受众和网页 OAuth 客户端。只申请 openid、email、profile。
-- Google 的 Authorized redirect URIs 填写 `https://vxlykqbucdefivchzuan.supabase.co/auth/v1/callback`。
-- 将 Client ID 和 Client Secret 直接填入 Supabase → Authentication → Sign In / Providers → Google，启用并保存。Secret 不放在前端、安装包、Git 或聊天里。
-- 正式公开时完成适用的品牌/域名验证，提供产品首页、隐私政策、服务条款和支持邮箱。开发与生产使用独立 OAuth 项目。
+在 Google Auth Platform 创建网页 OAuth 客户端，申请 `openid email profile`。正式环境的 **Authorized redirect URIs** 必须精确包含：
 
-## Supabase 返回地址
+```text
+https://playtrace.liyuqiaolucky.workers.dev/api/access/google/callback
+```
 
-Authentication → URL Configuration：
+本地开发需要另外注册 `http://127.0.0.1:5173/api/access/google/callback`。不使用通配符、不把 state 放入已注册地址。实际授权请求会单独携带随机 state。
 
-- Site URL：`https://playtrace.liyuqiaolucky.workers.dev`
-- Redirect URLs：`https://playtrace.liyuqiaolucky.workers.dev/api/access/google/callback**`
-- 本地联调另外加入 `http://127.0.0.1:5173/api/access/google/callback**`。只用于开发的项目也可加入实际使用的 localhost 地址。
+在 Cloudflare 的 Worker 加密配置中保存：
 
-这里的窄范围 `**` 用于匹配回调的随机 state 查询参数。不要放开整个域名、任意端口或任意站点。Google 控制台的回调是 Supabase 的 `/auth/v1/callback`，而 Supabase 返回地址是 Playtrace Worker，两者不同。
+- `GOOGLE_CLIENT_ID`：网页 OAuth Client ID。
+- `GOOGLE_CLIENT_SECRET`：该客户端的 Secret。
+- `GOOGLE_REDIRECT_URI`：上述正式回调完整地址。
+- `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`：仅用于数据库与 Storage。
 
-## 发布顺序
+本地 Worker 在被 Git 忽略的 `.dev.vars` 中配置同名变量，维护脚本使用 `.env.local`。生产上传使用独立、被忽略的 `.env.production`，回调必须是正式地址。任何 Secret 都不能进入 `VITE_*`、前端、安装包或 Git。
 
-1. 在 Google 和 Supabase 完成提供商配置及返回地址白名单。
-2. `npm run auth:setup` 只读取提供商状态；`npm run auth:setup -- --email owner@example.com` 预览将关联的邮箱与现有管理员 ID。邮箱必须由档案所有者明确提供。
-3. 测试和构建通过后，在维护窗口执行 `npm run db:migrate`。新迁移保留全部档案及管理员 ID，同时永久撤销旧邀请码和旧会话。此步会使旧管理登录停止工作。
-4. `npm run auth:setup -- --email owner@example.com --apply` 把指定邮箱关联到原档案管理员。脚本拒绝在 Google 未启用时写入；不自动重启被撤销账号，不自动更换既有 subject。
-5. `npm run deploy` 更新 Worker 和网页，安装 `0.3.0` Mac App / CLI，分别重新登录。
-6. 实际验证 Google 登录、非管理账号拒绝、私密记录读取、编辑及退出；切换设备验证不会共享浏览器会话。新会话最长 7 天。
+## 管理账号
 
-不要在缺少 OAuth 凭据或所有者邮箱时先迁移生产数据库，以免管理入口暂时不可用。也不要回滚到会重新开放旧远程 AI 通道的版本。
+确认邮箱后运行 `npm run auth:setup -- --email owner@example.com` 预览；加 `--apply` 关联原档案管理员。脚本只操作 `google_accounts`，不创建 Supabase Auth 用户。不会重启已撤销账号或重置已经绑定的 Google subject。
 
-## 实现与边界
+朋友无需登录即可浏览公开游戏。只有后端名单中的账号能管理；首次成功登录绑定 Google 不可变 subject，之后相同邮箱、不同 subject 也会被拒绝。
 
-浏览器 POST 同源登录接口；Worker 生成 PKCE verifier 和随机 state，临时数据存储在仅 service_role 可读写的表中。Google 通过 Supabase 回调返回一次性授权码，Worker 校验 HttpOnly 状态 Cookie 并原子消费状态，再调用 Supabase 交换、验证身份。身份必须来自 Google 已验证邮箱的 identity，不能依赖可编辑的 user_metadata。
+## 从 Supabase Auth 切换
 
-后端只匹配 `google_accounts` 名单；首次关联后还要匹配不可变 Google subject 和 Supabase 用户 ID。随机管理会话使用 `pg_` 前缀，数据库仅存摘要。旧 `ps_` 会话不会被识别。普通 Supabase Auth 用户无管理权限，不能直写档案。
+1. 在 Google Cloud 添加新的 Worker 回调，暂时保留旧回调。
+2. 配置 Worker 的三个 `GOOGLE_*` 变量，保留已有数据库配置。
+3. 应用 `20260919191601_direct_google_oauth.sql`。此兼容迁移添加 nonce、固定回调及双参数身份绑定函数，旧 Worker 仍可完成登录。
+4. 测试、构建并部署直接 Google Worker；验证网页登录，以及 App/CLI 授权。
+5. 应用 `20260919191603_retire_supabase_auth_binding.sql`：删除旧绑定函数、`auth_user_id` 外键列和旧流程临时记录。管理账号 ID、Google subject、档案及现有 Playtrace 会话保留。
+6. 在 Supabase 停用 Google 提供商，清除其 Client ID/Secret、Playtrace 登录返回白名单与 Site URL。Supabase 不允许空 Site URL 时改为不提供登录功能的保留域名 `https://unused.invalid`。不删除 Supabase 托管的 auth schema，也不级联删除用户或游戏数据。
+7. 在 Google Cloud 移除旧 `https://vxlykqbucdefivchzuan.supabase.co/auth/v1/callback` 地址。
 
-Mac 与 CLI：原生层生成随机秘密，只把哈希提交给服务端，打开固定 Playtrace HTTPS 授权页。用户比较校验码后再选择 Google 账号。浏览器完成授权后，只有持有原始秘密的客户端才能一次性领取管理会话并保存到钥匙串。每次主动登录最多等待 5 分钟，每 2 秒检查一次该登录请求，无常驻连接、远程任务或命令执行能力。Google OAuth 和 Google 令牌不进入 WKWebView；浏览器端也不保留 Google refresh token。
+已经部署过历史迁移的项目不能修改历史 SQL 来代替新迁移。分阶段发布时，每个实际应用的文件都应记录到 `playtrace_migrations`；新建环境可以按顺序应用全部文件。
 
-OAuth 临时 Cookie 使用 SameSite=Lax，允许 Google 返回；管理 Cookie 使用 Strict。登录成功后通过同源「继续使用玩迹」页面进入应用，避免浏览器在跨站重定向链中省略 Strict Cookie。没有自动把任意新 Google 用户提升为管理员。
+## 登录过程
 
-停用账号会撤销该账号的全部管理会话（每次 API 请求重新检查）：
+```text
+浏览器 → Worker：发起登录
+Worker → 数据库：保存 state 摘要、PKCE verifier、nonce、回调（5 分钟）
+浏览器 → Google：登录并授权
+Google → 浏览器 → Worker：一次性 code + state
+Worker → Google：使用 client secret、code 和 verifier 换 ID token
+Worker：用 Google 公钥验证签名、issuer、audience、有效期及 nonce
+Worker → 数据库：核对授权邮箱和 subject，保存随机会话摘要
+Worker → 浏览器：HttpOnly 管理 Cookie
+```
+
+状态同时绑定 HttpOnly Cookie，并在数据库原子消费一次，防止登录 CSRF 和重放。Google 公钥由 `jose` 缓存、更新并验证签名；令牌中的 URL 不能改变公钥来源。向 Google 交换令牌的请求不跟随重定向。Google access/refresh/ID token 只短暂存在于当前服务端请求中，不保存到数据库或返回浏览器。
+
+管理 Cookie 使用 Secure、HttpOnly、SameSite=Strict，最长 7 天。OAuth 临时 Cookie 使用 Lax 以接受 Google 返回。登录成功后通过同源「继续使用玩迹」链接进入应用。每次管理请求检查会话有效期和账号撤销状态，退出会删除会话。
+
+Mac 和 CLI 继续使用既有授权接口：原生端生成秘密、只提交摘要，打开系统浏览器让用户核对校验码并主动授权。只有持有原始秘密的客户端才能一次性领取会话，保存到钥匙串。0.3.0 客户端无需重装；不运行常驻服务，也不接收网页 AI 任务。
+
+撤销管理权限：
 
 ```sql
 update public.google_accounts set revoked_at=now() where email='owner@example.com';
 ```
 
-需要更换 Google 账号时新增授权并验证后再撤销旧账号，不能清空 subject 来隐式转移身份。
-
-参考：[Supabase Google 登录](https://supabase.com/docs/guides/auth/social-login/auth-google)、[PKCE](https://supabase.com/docs/guides/auth/sessions/pkce-flow)。
+参考：[Google OpenID Connect](https://developers.google.com/identity/openid-connect/openid-connect)、[jose 验证库](https://github.com/panva/jose)。

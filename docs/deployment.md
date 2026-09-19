@@ -5,7 +5,7 @@
 1. 创建项目，保存项目 URL 与服务端 secret key。数据库密码只用于迁移，不放入网页或 Worker。
 2. 从 Supabase 数据库设置下载根证书，配置被 Git 忽略的 `.env.database`：`SUPABASE_DB_HOST`、`SUPABASE_DB_USER`、`SUPABASE_DB_PASSWORD`、`SUPABASE_DB_CA`（证书路径）。运行 `npm run db:migrate` 按文件顺序应用全部迁移并记录版本。也可通过 Supabase CLI 应用所有迁移。旧版只执行过初始迁移的项目会被识别，后续迁移不会重复导入游戏。
 3. 将 `.dev.vars.example` 复制为 `.dev.vars`，`.env.local.example` 复制为 `.env.local`，各填入 `SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`。前者用于本地 Worker，后者用于本地维护脚本。
-4. 按 [Google 登录配置](google-login.md) 创建 OAuth 客户端并启用 Supabase Google 提供商。确认管理邮箱后运行 `npm run auth:setup -- --email owner@example.com --apply`。Google 迁移会撤销全部旧邀请码和旧会话，正式环境需先完成 Google 配置，再协调迁移、账号授权和部署。
+4. 按 [Google 登录配置](google-login.md) 创建 Google OAuth 客户端，并将凭据配置到 Cloudflare Worker。确认管理邮箱后运行 `npm run auth:setup -- --email owner@example.com --apply`。新项目按顺序应用全部迁移。已上线项目切换直接 Google 登录时，按登录文档分阶段迁移和部署。
 5. 如需导入本地资料，运行：
 
 ```sh
@@ -17,7 +17,7 @@ npm run data:import
 
 ## Google 管理账号
 
-网页点击「管理档案」，使用后端 `google_accounts` 中已授权的 Google 账号登录。朋友无需登录即可浏览公开内容。当前仍是共享档案库，不开放任意用户注册管理权限。授权账号首次登录绑定 Google subject 与 Supabase 用户，之后不能仅凭相同邮箱接管。
+网页点击「管理档案」，使用后端 `google_accounts` 中已授权的 Google 账号登录。朋友无需登录即可浏览公开内容。当前仍是共享档案库，不开放任意用户注册管理权限。授权账号首次登录绑定不可变 Google subject，之后不能仅凭相同邮箱接管。
 
 账号管理、回调地址、Mac/CLI 授权和完整发布顺序见 [Google 登录配置](google-login.md)。停用账号后，其网页、App、CLI 会话立即失效：
 
@@ -35,7 +35,8 @@ Cloudflare 的代码运行与静态资源托管均由一个名为 `playtrace` �
 npx wrangler login
 npm test
 npm run build
-npx wrangler secret bulk .dev.vars --name playtrace
+# 生产配置使用正式 HTTPS 回调，不能上传本地开发回调
+npx wrangler secret bulk .env.production --name playtrace
 npx wrangler deploy
 ```
 

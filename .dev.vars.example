@@ -1,2 +1,8 @@
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-server-only-key
+
+# Direct Google OAuth; server-side only, never VITE_* variables.
+GOOGLE_CLIENT_ID=your-web-client.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-server-only-google-secret
+# Must match an exact Google Cloud Authorized redirect URI.
+GOOGLE_REDIRECT_URI=http://127.0.0.1:5173/api/access/google/callback

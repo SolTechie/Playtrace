@@ -1,7 +1,8 @@
-import { createClient, type SupabaseClient, type User } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { googleConfig, exchangeGoogleCode, type AuthEnv } from './google-provider';
+export type { AuthEnv } from './google-provider';
 import { AccessError, requireSameOrigin, sessionCookie, sessionToken, sha256 } from './access';
 
-export type AuthEnv = { SUPABASE_URL?: string; SUPABASE_SERVICE_ROLE_KEY?: string };
 const lifetime = 300;
 const hexPattern = /^[a-f0-9]{64}$/;
 const uuidPattern = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -25,7 +26,7 @@ function flowCookieName(request: Request) {
 }
 function flowCookie(request: Request, value: string, age = lifetime) {
   const name = flowCookieName(request);
-  // Lax permits the top-level redirect from Google/Supabase. Management stays Strict.
+  // Lax permits the top-level redirect from Google. Management stays Strict.
   return `${name}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${age}${name.startsWith('__Host-') ? '; Secure' : ''}`;
 }
 function readFlowCookie(request: Request) {
@@ -133,16 +134,11 @@ async function start(request: Request, db: SupabaseClient, env: AuthEnv) {
   await rateLimit(request, db);
   const input = await smallBody(request);
   const native = input.nativeId ? await pendingNative(db, input.nativeId) : null;
-  const settings = await fetch(`${env.SUPABASE_URL}/auth/v1/settings`, {
-    headers: { apikey: env.SUPABASE_SERVICE_ROLE_KEY! },
-    // Workers supports manual redirects; reject non-2xx responses below.
-    redirect: 'manual',
-  });
-  if (!settings.ok || !((await settings.json()) as any).external?.google)
-    throw new AccessError(503, 'Google 登录尚未配置，请联系档案管理员');
+  const config = googleConfig(env, request);
   await cleanup(db);
   const state = randomSecret(),
-    verifier = randomSecret();
+    verifier = randomSecret(),
+    nonce = randomSecret();
   const digest = new Uint8Array(
     await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)),
   );
@@ -150,17 +146,23 @@ async function start(request: Request, db: SupabaseClient, env: AuthEnv) {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
-  const callback = new URL('/api/access/google/callback', request.url);
-  callback.searchParams.set('state', state);
-  const authorize = new URL('/auth/v1/authorize', env.SUPABASE_URL);
-  authorize.searchParams.set('provider', 'google');
-  authorize.searchParams.set('redirect_to', callback.href);
-  authorize.searchParams.set('code_challenge', challenge);
-  authorize.searchParams.set('code_challenge_method', 's256');
-  authorize.searchParams.set('prompt', 'select_account');
+  const authorize = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  authorize.search = new URLSearchParams({
+    client_id: config.clientId,
+    redirect_uri: config.redirectUri,
+    response_type: 'code',
+    scope: 'openid email profile',
+    state,
+    nonce,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    prompt: 'select_account',
+  }).toString();
   const { error } = await db.from('google_oauth_flows').insert({
     state_hash: await sha256(state),
     verifier,
+    nonce,
+    redirect_uri: config.redirectUri,
     return_path: safeReturnPath(input.returnTo),
     native_id: native?.id || null,
   });
@@ -176,22 +178,6 @@ async function start(request: Request, db: SupabaseClient, env: AuthEnv) {
       },
     });
   return json({ url: authorize.href }, 200, { 'Set-Cookie': flowCookie(request, state) });
-}
-export function verifiedGoogleIdentity(user: User) {
-  const identity = user.identities?.find((i) => i.provider === 'google');
-  const data = identity?.identity_data;
-  // Never trust user_metadata (editable by the user), submitted email or client JWT decoding.
-  if (
-    !user.id ||
-    !user.email_confirmed_at ||
-    !identity ||
-    data?.email_verified !== true ||
-    typeof data.email !== 'string' ||
-    typeof data.sub !== 'string' ||
-    !data.sub
-  )
-    throw new AccessError(403, '请使用已验证邮箱的 Google 账号登录');
-  return { email: data.email.trim().toLowerCase(), subject: data.sub, userId: user.id };
 }
 async function removePreviousSession(request: Request, db: SupabaseClient) {
   const previous = sessionToken(request);
@@ -218,87 +204,52 @@ async function callback(request: Request, db: SupabaseClient, env: AuthEnv) {
     if (url.searchParams.has('error')) throw new AccessError(400, 'Google 登录未完成，请重试');
     const code = url.searchParams.get('code');
     if (!code || code.length > 2048) throw new AccessError(400, '缺少 Google 登录结果，请重试');
-    // This client is isolated from the privileged database client: auth exchange must
-    // never replace the service-role Authorization header used for database operations.
-    // The SDK needs JSON-encoded storage and persistSession=true to use a custom
-    // adapter. This Map is request-local only; nothing is persisted outside it.
-    const transient = new Map<string, string>([
-      ['playtrace-oauth-code-verifier', JSON.stringify(flow.verifier)],
-    ]);
-    const auth = createClient(env.SUPABASE_URL!, env.SUPABASE_SERVICE_ROLE_KEY!, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-        flowType: 'pkce',
-        storageKey: 'playtrace-oauth',
-        storage: {
-          getItem: (key) => transient.get(key) ?? null,
-          setItem: (key, value) => {
-            transient.set(key, value);
-          },
-          removeItem: (key) => {
-            transient.delete(key);
-          },
-        },
-      },
+    const config = googleConfig(env, request);
+    if (!hexPattern.test(flow.nonce || '') || flow.redirect_uri !== config.redirectUri)
+      throw new AccessError(410, '登录配置已更新，请重新发起登录');
+    const google = await exchangeGoogleCode(code, flow.verifier, flow.nonce, config);
+    const { data: accounts, error: accountError } = await db.rpc('bind_google_account', {
+      p_email: google.email,
+      p_subject: google.subject,
     });
-    const { data: result, error: authError } = await auth.auth.exchangeCodeForSession(code);
-    if (authError || !result.session) throw new AccessError(401, 'Google 登录验证失败，请重新登录');
-    try {
-      const { data: verified, error: verificationError } = await auth.auth.getUser(
-        result.session.access_token,
-      );
-      if (verificationError || !verified.user) throw new AccessError(401, '无法验证 Google 账号');
-      const google = verifiedGoogleIdentity(verified.user);
-      const { data: accounts, error: accountError } = await db.rpc('bind_google_account', {
-        p_email: google.email,
-        p_subject: google.subject,
-        p_user_id: google.userId,
-      });
-      check(accountError);
-      const account = accounts?.[0];
-      if (!account)
-        throw new AccessError(403, '这个 Google 账号尚未获得管理权限，请使用管理员授权的账号');
-      if (flow.native_id) {
-        const { data: approved, error: approvalError } = await db
-          .from('google_native_logins')
-          .update({ account_id: account.id })
-          .eq('id', flow.native_id)
-          .is('account_id', null)
-          .gt('expires_at', new Date().toISOString())
-          .select('id')
-          .maybeSingle();
-        check(approvalError);
-        if (!approved) throw new AccessError(410, '桌面登录请求已结束，请在电脑重新登录');
-        return page(
-          '已授权本机登录',
-          '<p>请返回刚才发起登录的玩迹 App 或终端。此页面可以关闭。</p>',
-          200,
-          flowCookie(request, '', 0),
-        );
-      }
-      const token = `pg_${randomSecret()}`;
-      const { error: sessionError } = await db.from('google_sessions').insert({
-        token_hash: await sha256(token),
-        account_id: account.id,
-      });
-      check(sessionError);
-      await removePreviousSession(request, db);
-      // An intermediate same-origin page ensures Strict cookies work after the OAuth redirect.
-      const response = page(
-        '登录成功',
-        `<p>已使用 ${escapeHtml(google.email)} 登录。</p><a href="${escapeHtml(safeReturnPath(flow.return_path))}">继续使用玩迹 →</a>`,
+    check(accountError);
+    const account = accounts?.[0];
+    if (!account)
+      throw new AccessError(403, '这个 Google 账号尚未获得管理权限，请使用管理员授权的账号');
+    if (flow.native_id) {
+      const { data: approved, error: approvalError } = await db
+        .from('google_native_logins')
+        .update({ account_id: account.id })
+        .eq('id', flow.native_id)
+        .is('account_id', null)
+        .gt('expires_at', new Date().toISOString())
+        .select('id')
+        .maybeSingle();
+      check(approvalError);
+      if (!approved) throw new AccessError(410, '桌面登录请求已结束，请在电脑重新登录');
+      return page(
+        '已授权本机登录',
+        '<p>请返回刚才发起登录的玩迹 App 或终端。此页面可以关闭。</p>',
         200,
         flowCookie(request, '', 0),
       );
-      response.headers.append('Set-Cookie', sessionCookie(request, token, 7 * 86400));
-      return response;
-    } finally {
-      // We keep only our revocable archive session; don't retain provider access/refresh tokens.
-      await auth.auth.signOut({ scope: 'local' }).catch(() => {});
-      transient.clear();
     }
+    const token = `pg_${randomSecret()}`;
+    const { error: sessionError } = await db.from('google_sessions').insert({
+      token_hash: await sha256(token),
+      account_id: account.id,
+    });
+    check(sessionError);
+    await removePreviousSession(request, db);
+    // An intermediate same-origin page ensures Strict cookies work after the OAuth redirect.
+    const response = page(
+      '登录成功',
+      `<p>已使用 ${escapeHtml(google.email)} 登录。</p><a href="${escapeHtml(safeReturnPath(flow.return_path))}">继续使用玩迹 →</a>`,
+      200,
+      flowCookie(request, '', 0),
+    );
+    response.headers.append('Set-Cookie', sessionCookie(request, token, 7 * 86400));
+    return response;
   } catch (error) {
     const status = error instanceof AccessError ? error.status : 503;
     const message = error instanceof AccessError ? error.message : '暂时无法完成登录，请重试';
