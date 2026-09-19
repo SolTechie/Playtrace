@@ -34,7 +34,7 @@ https://playtrace.liyuqiaolucky.workers.dev/api/access/google/callback
 3. 应用 `20260919191601_direct_google_oauth.sql`。此兼容迁移添加 nonce、固定回调及双参数身份绑定函数，旧 Worker 仍可完成登录。
 4. 测试、构建并部署直接 Google Worker；验证网页登录，以及 App/CLI 授权。
 5. 应用 `20260919191603_retire_supabase_auth_binding.sql`：删除旧绑定函数、`auth_user_id` 外键列和旧流程临时记录。管理账号 ID、Google subject、档案及现有 Playtrace 会话保留。
-6. 在 Supabase 停用 Google 提供商，清除其 Client ID/Secret、Playtrace 登录返回白名单与 Site URL。Supabase 不允许空 Site URL 时改为不提供登录功能的保留域名 `https://unused.invalid`。不删除 Supabase 托管的 auth schema，也不级联删除用户或游戏数据。
+6. 在 Supabase 停用 Google、邮箱登录和注册，清除 Google Client ID/Secret、Playtrace 登录返回白名单与 Site URL。通过 Management API 清除凭据时将 `external_google_client_id` 和 `external_google_secret` 设为 `null`；空字符串不会删除配置项。Supabase 不允许空 Site URL 时改为不提供登录功能的保留域名 `https://unused.invalid`。不删除 Supabase 托管的 auth schema，也不级联删除用户或游戏数据。
 7. 在 Google Cloud 移除旧 `https://vxlykqbucdefivchzuan.supabase.co/auth/v1/callback` 地址。
 
 已经部署过历史迁移的项目不能修改历史 SQL 来代替新迁移。分阶段发布时，每个实际应用的文件都应记录到 `playtrace_migrations`；新建环境可以按顺序应用全部文件。
