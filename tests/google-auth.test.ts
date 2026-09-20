@@ -231,6 +231,56 @@ describe('Google OAuth and native login', () => {
     expect(await page.text()).toContain('两处校验码一致');
     expect(page.headers.get('Content-Security-Policy')).toContain("frame-ancestors 'none'");
   });
+  it('supports browser form origin checks and Google redirects on the native authorization page', async () => {
+    const db = database();
+    const authorize = (await googleAuthRoute(
+      new Request(`${origin}/api/access/native/authorize?id=${id}`),
+      db,
+      env,
+    ))!;
+    // no-referrer makes navigation-mode POST Origin null, failing the server's CSRF check.
+    expect(authorize.headers.get('Referrer-Policy')).toBe('same-origin');
+    const directives = authorize.headers
+      .get('Content-Security-Policy')!
+      .split(';')
+      .map((s) => s.trim());
+    // Browsers also check redirects against form-action, not just the initial POST URL.
+    expect(directives).toContain("form-action 'self' https://accounts.google.com");
+    expect(directives).toContain("default-src 'none'");
+    expect(directives).toContain("frame-ancestors 'none'");
+    const form = new Request(`${origin}/api/access/google/start`, {
+      method: 'POST',
+      headers: {
+        Origin: origin,
+        'Sec-Fetch-Site': 'same-origin',
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ nativeId: id }),
+    });
+    const response = (await googleAuthRoute(form, db, env))!;
+    expect(response.status).toBe(303);
+    expect(new URL(response.headers.get('Location')!).origin).toBe('https://accounts.google.com');
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-playtrace_oauth=');
+    for (const requestOrigin of ['null', 'https://other.test']) {
+      await expect(
+        googleAuthRoute(
+          new Request(`${origin}/api/access/google/start`, {
+            method: 'POST',
+            headers: { Origin: requestOrigin, 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ nativeId: id }),
+          }),
+          db,
+          env,
+        ),
+      ).rejects.toMatchObject({ status: 403 });
+    }
+  });
+  it('keeps callback pages from leaking authorization URLs to other pages', async () => {
+    const response = (await googleAuthRoute(callback(), database(), env))!;
+    expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+    expect(response.headers.get('Content-Security-Policy')).toContain("form-action 'self';");
+    expect(response.headers.get('Content-Security-Policy')).not.toContain('accounts.google.com');
+  });
   it('approves only the pending native request, without logging the browser into management', async () => {
     const db = database({
       flow: {

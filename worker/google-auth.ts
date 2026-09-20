@@ -97,7 +97,13 @@ const escapeHtml = (value: string) =>
     /[&<>"']/g,
     (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!,
   );
-function page(title: string, content: string, status = 200, cookie?: string) {
+function page(
+  title: string,
+  content: string,
+  status = 200,
+  cookie?: string,
+  nativeAuthorization = false,
+) {
   return new Response(
     `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} · 玩迹</title>
 <style>body{background:#101214;color:#eee;font:16px/1.8 system-ui;margin:0;padding:24px}main{max-width:460px;margin:12vh auto}h1{font-size:26px}p{color:#b8bdb9}button,a{font:inherit;color:#bce99b}button{background:#bce99b;color:#101214;border:0;border-radius:10px;padding:12px 20px;cursor:pointer}code{font-size:26px;letter-spacing:4px}small{color:#aaa}</style>
@@ -107,10 +113,12 @@ function page(title: string, content: string, status = 200, cookie?: string) {
       headers: {
         'Content-Type': 'text/html; charset=utf-8',
         'Cache-Control': 'no-store',
-        'Referrer-Policy': 'no-referrer',
+        // Native form POSTs need a non-null Origin. Cross-origin referrers stay hidden.
+        'Referrer-Policy': nativeAuthorization ? 'same-origin' : 'no-referrer',
         'X-Content-Type-Options': 'nosniff',
         'Content-Security-Policy':
-          "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+          // form-action applies to the Google redirect chain as well as the same-origin POST.
+          `default-src 'none'; style-src 'unsafe-inline'; form-action 'self'${nativeAuthorization ? ' https://accounts.google.com' : ''}; base-uri 'none'; frame-ancestors 'none'`,
         ...(cookie ? { 'Set-Cookie': cookie } : {}),
       },
     },
@@ -307,6 +315,9 @@ export async function googleAuthRoute(
     return page(
       native.client_name === 'cli' ? '授权本机 CLI' : '授权 Mac App',
       `<p>请核对本机显示的校验码：</p><p><code>${native.id.slice(0, 8).toUpperCase()}</code></p><p>仅在你刚刚主动发起登录、且两处校验码一致时继续。登录后，这个客户端可以管理你的游戏库。</p><form method="post" action="/api/access/google/start"><input type="hidden" name="nativeId" value="${native.id}"><button>使用 Google 账号授权</button></form>`,
+      200,
+      undefined,
+      true,
     );
   }
   if (path === '/api/access/native/claim' && request.method === 'POST') {
