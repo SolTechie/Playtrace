@@ -22,7 +22,7 @@ import Foundation
         check(!Policy.allows("/access/verify", method: "POST"), "old invite route removed")
         check(Policy.allowsWeb("/access/google/login", method: "POST"), "native login action")
         check(!Policy.allows("/access/google/login", method: "POST"), "login action is not an HTTP endpoint")
-        for path in ["/access/native/start", "/access/native/claim"] {
+        for path in ["/access/native/start", "/access/native/claim", "/access/native/cancel"] {
             check(Policy.allows(path, method: "POST"), "native-only auth route")
             check(!Policy.allowsWeb(path, method: "POST"), "web content cannot access auth proofs")
         }
@@ -30,6 +30,12 @@ import Foundation
         check(Policy.loginURL(login, id: id) != nil, "fixed-origin login URL")
         for value in [login.replacingOccurrences(of: "https:", with: "http:"), login.replacingOccurrences(of: "workers.dev", with: "evil.test"), login + "&next=https://evil.test", login + "#fragment", Policy.origin + "/api/jobs?id=" + id] {
             check(Policy.loginURL(value, id: id) == nil, "reject unsafe browser authorization URL")
+        }
+        let completion = String(repeating: "a", count: 64)
+        let callback = "playtrace-auth://login/complete?id=" + id + "&code=" + completion
+        check(Policy.authCompletion(URL(string: callback)!, id: id) == completion, "OS callback proof accepted")
+        for value in [callback.replacingOccurrences(of: "playtrace-auth:", with: "https:"), callback.replacingOccurrences(of: "login/complete", with: "evil/complete"), callback + "#fragment", callback + "&code=" + completion, callback.replacingOccurrences(of: id, with: "11111111-1111-4111-a111-111111111111"), callback.replacingOccurrences(of: completion, with: "short")] {
+            check(Policy.authCompletion(URL(string: value)!, id: id) == nil, "reject callback substitution")
         }
         let original: [String: Any] = ["id": id, "version": 3, "title": "哈迪斯2", "hours": 42.5, "notes": "保留我的笔记", "is_published": false, "images": [["url": "https://example.com/image.png", "alt": "封面"]]]
         let merged = try Draft.merge(["release_year": 2025], into: original, resource: "games", version: 3)

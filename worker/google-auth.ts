@@ -128,7 +128,7 @@ async function pendingNative(db: SupabaseClient, id: unknown) {
   if (typeof id !== 'string' || !uuidPattern.test(id)) throw new AccessError(400, '登录请求无效');
   const { data, error } = await db
     .from('google_native_logins')
-    .select('id,client_name,account_id')
+    .select('id,client_name,account_id,return_to_app')
     .eq('id', id)
     .gt('expires_at', new Date().toISOString())
     .maybeSingle();
@@ -137,10 +137,19 @@ async function pendingNative(db: SupabaseClient, id: unknown) {
     throw new AccessError(410, '本次登录已结束或超时，请从 App 或 CLI 重新登录');
   return data;
 }
-async function start(request: Request, db: SupabaseClient, env: AuthEnv) {
-  requireSameOrigin(request);
+async function start(
+  request: Request,
+  db: SupabaseClient,
+  env: AuthEnv,
+  appNative?: { id: string },
+) {
+  // Only the fixed native authorize route can enter via GET. Redemption also needs
+  // the completion proof delivered to the initiating OS authentication session.
+  if (!appNative) requireSameOrigin(request);
   await rateLimit(request, db);
-  const input = await smallBody(request);
+  const input: Record<string, unknown> = appNative
+    ? { nativeId: appNative.id }
+    : await smallBody(request);
   const native = input.nativeId ? await pendingNative(db, input.nativeId) : null;
   const config = googleConfig(env, request);
   await cleanup(db);
@@ -225,16 +234,33 @@ async function callback(request: Request, db: SupabaseClient, env: AuthEnv) {
     if (!account)
       throw new AccessError(403, '这个 Google 账号尚未获得管理权限，请使用管理员授权的账号');
     if (flow.native_id) {
+      const completion = randomSecret();
       const { data: approved, error: approvalError } = await db
         .from('google_native_logins')
-        .update({ account_id: account.id })
+        .update({ account_id: account.id, completion_hash: await sha256(completion) })
         .eq('id', flow.native_id)
         .is('account_id', null)
         .gt('expires_at', new Date().toISOString())
-        .select('id')
+        .select('id,return_to_app')
         .maybeSingle();
       check(approvalError);
       if (!approved) throw new AccessError(410, '桌面登录请求已结束，请在电脑重新登录');
+      if (approved.return_to_app) {
+        const completionURL = new URL('playtrace-auth://login/complete');
+        completionURL.search = new URLSearchParams({
+          id: approved.id,
+          code: completion,
+        }).toString();
+        return new Response(null, {
+          status: 303,
+          headers: {
+            Location: completionURL.href,
+            'Set-Cookie': flowCookie(request, '', 0),
+            'Cache-Control': 'no-store',
+            'Referrer-Policy': 'no-referrer',
+          },
+        });
+      }
       return page(
         '已授权本机登录',
         '<p>请返回刚才发起登录的玩迹 App 或终端。此页面可以关闭。</p>',
@@ -287,7 +313,9 @@ export async function googleAuthRoute(
     if (
       typeof input.challenge !== 'string' ||
       !hexPattern.test(input.challenge) ||
-      !['desktop', 'cli'].includes(input.client as string)
+      !['desktop', 'cli'].includes(input.client as string) ||
+      (input.returnToApp !== undefined && typeof input.returnToApp !== 'boolean') ||
+      (input.returnToApp === true && input.client !== 'desktop')
     )
       throw new AccessError(400, '桌面登录请求无效');
     await cleanup(db);
@@ -296,6 +324,7 @@ export async function googleAuthRoute(
       .insert({
         secret_hash: input.challenge,
         client_name: input.client,
+        return_to_app: input.returnToApp === true,
       })
       .select('id,expires_at')
       .single();
@@ -312,6 +341,7 @@ export async function googleAuthRoute(
   }
   if (path === '/api/access/native/authorize' && request.method === 'GET') {
     const native = await pendingNative(db, url.searchParams.get('id'));
+    if (native.return_to_app) return start(request, db, env, native);
     return page(
       native.client_name === 'cli' ? '授权本机 CLI' : '授权 Mac App',
       `<p>请核对本机显示的校验码：</p><p><code>${native.id.slice(0, 8).toUpperCase()}</code></p><p>仅在你刚刚主动发起登录、且两处校验码一致时继续。登录后，这个客户端可以管理你的游戏库。</p><form method="post" action="/api/access/google/start"><input type="hidden" name="nativeId" value="${native.id}"><button>使用 Google 账号授权</button></form>`,
@@ -319,6 +349,24 @@ export async function googleAuthRoute(
       undefined,
       true,
     );
+  }
+  if (path === '/api/access/native/cancel' && request.method === 'POST') {
+    requireSameOrigin(request);
+    const input = await smallBody(request);
+    if (
+      typeof input.id !== 'string' ||
+      !uuidPattern.test(input.id) ||
+      typeof input.secret !== 'string' ||
+      !hexPattern.test(input.secret)
+    )
+      throw new AccessError(400, '桌面登录请求无效');
+    const { error } = await db
+      .from('google_native_logins')
+      .delete()
+      .eq('id', input.id)
+      .eq('secret_hash', await sha256(input.secret));
+    check(error);
+    return json({ cancelled: true });
   }
   if (path === '/api/access/native/claim' && request.method === 'POST') {
     requireSameOrigin(request);
@@ -330,12 +378,19 @@ export async function googleAuthRoute(
       !hexPattern.test(input.secret)
     )
       throw new AccessError(400, '桌面登录请求无效');
+    if (
+      input.completion !== undefined &&
+      (typeof input.completion !== 'string' || !hexPattern.test(input.completion))
+    )
+      throw new AccessError(400, '登录回调无效，请重新登录');
     const secretHash = await sha256(input.secret);
     const token = `pg_${randomSecret()}`;
     const { data, error } = await db.rpc('claim_google_native_login', {
       p_id: input.id,
       p_secret_hash: secretHash,
       p_session_hash: await sha256(token),
+      p_completion_hash:
+        typeof input.completion === 'string' ? await sha256(input.completion) : null,
     });
     check(error);
     if (!data?.[0]) {

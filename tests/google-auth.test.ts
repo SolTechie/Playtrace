@@ -295,8 +295,102 @@ describe('Google OAuth and native login', () => {
     expect(response.status).toBe(200);
     expect(response.headers.get('set-cookie')).not.toContain('playtrace_session');
     expect(db.writes).toEqual([
-      { table: 'google_native_logins', method: 'update', value: { account_id: id } },
+      {
+        table: 'google_native_logins',
+        method: 'update',
+        value: { account_id: id, completion_hash: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      },
     ]);
+  });
+  it('starts OS-session login without the browser code-comparison page', async () => {
+    const db = database({
+      native: { id, client_name: 'desktop', account_id: null, return_to_app: true },
+    });
+    const start = (await googleAuthRoute(
+      post('native/start', { challenge: '2'.repeat(64), client: 'desktop', returnToApp: true }),
+      db,
+      env,
+    ))!;
+    const data = await start.json();
+    expect(
+      db.writes.find((w: any) => w.method === 'insert' && w.table === 'google_native_logins').value
+        .return_to_app,
+    ).toBe(true);
+    const response = (await googleAuthRoute(new Request(data.url), db, env))!;
+    expect(response.status).toBe(303);
+    expect(new URL(response.headers.get('Location')!).origin).toBe('https://accounts.google.com');
+    expect(response.headers.get('Set-Cookie')).toContain('__Host-playtrace_oauth=');
+    expect(await response.text()).not.toContain('校验码');
+    await expect(
+      googleAuthRoute(
+        post('native/start', { challenge: '2'.repeat(64), client: 'cli', returnToApp: true }),
+        database(),
+        env,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+  it('delivers a one-time completion proof to the App callback without issuing a browser session', async () => {
+    const db = database({
+      native: { id, return_to_app: true },
+      flow: {
+        verifier: 'v'.repeat(64),
+        nonce,
+        redirect_uri: env.GOOGLE_REDIRECT_URI,
+        native_id: id,
+      },
+    });
+    const response = (await googleAuthRoute(callback(), db, env))!;
+    expect(response.status).toBe(303);
+    const next = new URL(response.headers.get('Location')!);
+    expect(next.protocol + '//' + next.host + next.pathname).toBe(
+      'playtrace-auth://login/complete',
+    );
+    expect(next.searchParams.get('id')).toBe(id);
+    const completion = next.searchParams.get('code')!;
+    expect(completion).toMatch(/^[a-f0-9]{64}$/);
+    expect(db.writes[0].value.completion_hash).toBe(await sha256(completion));
+    expect(response.headers.get('Set-Cookie')).not.toContain('playtrace_session');
+    expect(response.headers.get('Referrer-Policy')).toBe('no-referrer');
+    expect(db.writes.some((w: any) => w.table === 'google_sessions')).toBe(false);
+    const claimant = database({
+      claim: [
+        { email: 'owner@example.com', expires_at: new Date(Date.now() + 60000).toISOString() },
+      ],
+    });
+    const claimed = (await googleAuthRoute(
+      post('native/claim', { id, secret: '3'.repeat(64), completion }),
+      claimant,
+      env,
+    ))!;
+    expect(claimed.status).toBe(200);
+    expect(claimant.rpc).toHaveBeenCalledWith(
+      'claim_google_native_login',
+      expect.objectContaining({ p_completion_hash: await sha256(completion) }),
+    );
+    await expect(
+      googleAuthRoute(
+        post('native/claim', { id, secret: '3'.repeat(64), completion: 'invalid' }),
+        database(),
+        env,
+      ),
+    ).rejects.toMatchObject({ status: 400 });
+  });
+  it('cancels only the proof-bound pending login and rejects cross-site cancellations', async () => {
+    const db = database();
+    expect(
+      (await googleAuthRoute(post('native/cancel', { id, secret: '3'.repeat(64) }), db, env))!
+        .status,
+    ).toBe(200);
+    expect(db.writes).toEqual([
+      { table: 'google_native_logins', method: 'delete', value: undefined },
+    ]);
+    await expect(
+      googleAuthRoute(
+        post('native/cancel', { id, secret: '3'.repeat(64) }, 'https://other.test'),
+        database(),
+        env,
+      ),
+    ).rejects.toMatchObject({ status: 403 });
   });
   it('hands a native session only to the proof-holding claimant', async () => {
     const secret = '3'.repeat(64),

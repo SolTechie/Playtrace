@@ -12,7 +12,7 @@ npm run desktop:build
 npm run desktop:test
 ```
 
-输出 `artifacts/Playtrace.app`、`artifacts/playtrace`、`artifacts/Playtrace-0.3.0-arm64.dmg` 与校验值。支持 Apple Silicon，macOS 13+。DMG 内将 App 拖入 Applications，运行 `Install CLI.command` 安装 CLI。也可以手动安装到个人目录：
+输出 `artifacts/Playtrace.app`、`artifacts/playtrace`、`artifacts/Playtrace-0.4.0-arm64.dmg` 与校验值。支持 Apple Silicon，macOS 13+。DMG 内将 App 拖入 Applications，运行 `Install CLI.command` 安装 CLI。也可以手动安装到个人目录：
 
 ```sh
 mkdir -p ~/Applications ~/.local/bin
@@ -23,7 +23,7 @@ install -m 755 artifacts/playtrace ~/.local/bin/playtrace
 
 本地构建采用 ad-hoc 签名与 Hardened Runtime；桌面 App 启用 App Sandbox、出站网络和用户选中文件的只读权限。未完成 Developer ID 签名和 Apple 公证，不作为已公证的公众发行包。对其他用户分发前需用自己的 Apple Developer ID 证书签名并提交公证，不能要求关闭 Gatekeeper。
 
-首次运行 `playtrace auth login`，核对终端与系统浏览器的校验码，再使用已授权的 Google 账号登录。Mac App 点击 Google 登录按钮执行相同的浏览器授权。授权最多等待 5 分钟，CLI 可按 Ctrl+C 取消。App、CLI、浏览器登录状态独立；各自持有服务端校验的最长 7 天会话，App/CLI 凭据只保存在 macOS 钥匙串。CLI 可在 App 未启动时使用。会话不是权限缩小的个人访问令牌，目前仍有整个共享档案的管理权限。
+首次运行 `playtrace auth login`，核对终端与系统浏览器的校验码，再使用已授权的 Google 账号登录。Mac App 0.4.0 点击 Google 登录按钮后打开系统原生授权窗口，完成后自动回到 App，不打开独立浏览器标签页，也不需要核对校验码。系统可能显示一次网站授权提示；使用独立的临时登录会话，不读取普通浏览器的登录状态。授权最多等待 5 分钟，CLI 可按 Ctrl+C 取消。App、CLI、浏览器登录状态独立；各自持有服务端校验的最长 7 天会话，App/CLI 凭据只保存在 macOS 钥匙串。CLI 可在 App 未启动时使用。会话不是权限缩小的个人访问令牌，目前仍有整个共享档案的管理权限。
 
 ## 在 Codex 中使用
 

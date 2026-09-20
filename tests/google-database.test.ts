@@ -194,6 +194,41 @@ describe.sequential('Google access migration and atomic grants', () => {
       (await db.query('select * from public.resolve_google_session($1)', [session])).rows,
     ).toHaveLength(1);
   });
+  it('requires the OS callback proof as well as the initiating secret for App sessions', async () => {
+    const appSession = 'f'.repeat(64),
+      completion = '9'.repeat(64);
+    await db.query(
+      "insert into public.google_native_logins(id,secret_hash,client_name,return_to_app,account_id,completion_hash) values($1,$2,'desktop',true,$3,$4)",
+      [native, secret, owner, completion],
+    );
+    const claim = (proof: string | null) =>
+      db.query('select * from public.claim_google_native_login($1,$2,$3,$4)', [
+        native,
+        secret,
+        appSession,
+        proof,
+      ]);
+    // An attacker who initiates a login and sends its URL elsewhere cannot redeem it.
+    expect(
+      (
+        await db.query('select * from public.claim_google_native_login($1,$2,$3)', [
+          native,
+          secret,
+          appSession,
+        ])
+      ).rows,
+    ).toHaveLength(0);
+    expect((await claim(null)).rows).toHaveLength(0);
+    expect((await claim(state)).rows).toHaveLength(0);
+    expect((await claim(completion)).rows).toHaveLength(1);
+    expect((await claim(completion)).rows).toHaveLength(0);
+    await expect(
+      db.query(
+        "insert into public.google_native_logins(secret_hash,client_name,return_to_app) values($1,'cli',true)",
+        [secret],
+      ),
+    ).rejects.toThrow();
+  });
   it('rejects expired sessions, logout and account revocation immediately', async () => {
     await db.query(
       "update public.google_sessions set expires_at=now()-interval '1 second' where token_hash=$1",

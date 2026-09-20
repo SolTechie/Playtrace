@@ -17,7 +17,7 @@ enum Policy {
         // No arbitrary URL, encoded path, task queue, local command, or redirect support.
         if path.contains("%") || path.contains("\\") || path.contains("#") { return false }
         if method == "GET", ["/config", "/health", "/me"].contains(path) { return true }
-        if method == "POST", ["/access/native/start", "/access/native/claim", "/access/exit", "/upload"].contains(path) { return true }
+        if method == "POST", ["/access/native/start", "/access/native/claim", "/access/native/cancel", "/access/exit", "/upload"].contains(path) { return true }
         let parts = path.split(separator: "?", omittingEmptySubsequences: false)
         guard parts.count <= 2 else { return false }
         let components = parts[0].split(separator: "/", omittingEmptySubsequences: false)
@@ -43,6 +43,19 @@ enum Policy {
               parts.path == "/api/access/native/authorize",
               parts.queryItems == [URLQueryItem(name: "id", value: id)] else { return nil }
         return url
+    }
+    static let authCallbackScheme = "playtrace-auth"
+    static func authCompletion(_ url: URL, id: String) -> String? {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.scheme == authCallbackScheme, parts.host == "login", parts.path == "/complete",
+              parts.user == nil, parts.password == nil, parts.port == nil, parts.fragment == nil,
+              let items = parts.queryItems, items.count == 2,
+              items.filter({ $0.name == "id" }).count == 1,
+              items.first(where: { $0.name == "id" })?.value == id,
+              items.filter({ $0.name == "code" }).count == 1,
+              let code = items.first(where: { $0.name == "code" })?.value,
+              code.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { return nil }
+        return code
     }
     static func trustedFrame(scheme: String, host: String, main: Bool) -> Bool {
         main && scheme == "playtrace" && host == "app"
@@ -156,6 +169,26 @@ final class APIClient {
     }
     func json(_ path: String, method: String = "GET", body: Any? = nil) async throws -> Any {
         try await request(path, method: method, body: body.map { try JSONSerialization.data(withJSONObject: $0) }).checked()
+    }
+    @MainActor func loginWithAppSession(authorize: (URL) async throws -> URL) async throws {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            throw PlaytraceError("无法生成登录校验，请重试。")
+        }
+        let secret = bytes.map { String(format: "%02x", $0) }.joined()
+        let challenge = SHA256.hash(data: Data(secret.utf8)).map { String(format: "%02x", $0) }.joined()
+        guard let start = try await json("/access/native/start", method: "POST", body: ["challenge": challenge, "client": "desktop", "returnToApp": true]) as? [String: Any],
+              let id = start["id"] as? String, let rawURL = start["url"] as? String,
+              let url = Policy.loginURL(rawURL, id: id) else { throw PlaytraceError("无效的登录地址。") }
+        do {
+            let callback = try await authorize(url)
+            guard let completion = Policy.authCompletion(callback, id: id) else { throw PlaytraceError("登录回调不匹配，请重试。") }
+            let response = try await request("/access/native/claim", method: "POST", body: JSONSerialization.data(withJSONObject: ["id": id, "secret": secret, "completion": completion]))
+            guard response.status == 200 else { _ = try response.checked(); throw PlaytraceError("登录尚未完成，请重试。") }
+        } catch {
+            _ = try? await request("/access/native/cancel", method: "POST", body: JSONSerialization.data(withJSONObject: ["id": id, "secret": secret]))
+            throw error
+        }
     }
     func loginWithGoogle(client: String, confirm: @MainActor (String) -> Bool) async throws {
         var bytes = [UInt8](repeating: 0, count: 32)

@@ -56,7 +56,9 @@ Worker → 浏览器：HttpOnly 管理 Cookie
 
 管理 Cookie 使用 Secure、HttpOnly、SameSite=Strict，最长 7 天。OAuth 临时 Cookie 使用 Lax 以接受 Google 返回。登录成功后通过同源「继续使用玩迹」链接进入应用。每次管理请求检查会话有效期和账号撤销状态，退出会删除会话。
 
-Mac 和 CLI 继续使用既有授权接口：原生端生成秘密、只提交摘要，打开系统浏览器让用户核对校验码并主动授权。只有持有原始秘密的客户端才能一次性领取会话，保存到钥匙串。0.3.0 客户端无需重装；不运行常驻服务，也不接收网页 AI 任务。
+Mac App 0.4.0 使用 `ASWebAuthenticationSession` 系统授权窗口，取消手动校验码和外部浏览器标签页。新登录记录设置 `return_to_app=true`；Google 授权完成后，Worker 只向 `playtrace-auth://login/complete` 返回一次性 completion 凭据及请求 ID。App 校验回调的 scheme、host、path、请求 ID 和参数，再同时提交本机发起秘密与 completion 凭据领取会话。数据库只存两者摘要，仅持有发起秘密无法冒领其他设备完成的授权。用户取消或超时后会清理本次请求。系统授权窗口使用临时会话；Google 密码和网页内容不进入 App 的 WKWebView。
+
+发布 0.4.0 前先应用 `20260920005806_native_auth_session.sql`，再部署 Worker 和安装新版 App。CLI 与旧版 App 保留校验码/系统浏览器流程，数据库函数的新增参数提供兼容默认值，不能让旧的三参数调用绕过 App completion 校验。所有客户端仍将管理会话保存在钥匙串，不运行常驻服务，也不接收网页 AI 任务。
 
 撤销管理权限：
 

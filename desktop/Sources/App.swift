@@ -1,6 +1,7 @@
 import AppKit
 import WebKit
 import UniformTypeIdentifiers
+import AuthenticationServices
 
 final class BundleAssets: NSObject, WKURLSchemeHandler {
     let root: URL
@@ -22,9 +23,67 @@ final class BundleAssets: NSObject, WKURLSchemeHandler {
     func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
 }
 
+@MainActor final class AppAuthentication: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+    private var continuation: CheckedContinuation<URL, Error>?
+    private var timeout: Task<Void, Never>?
+    private var anchor: NSWindow?
+    private var activeID: UUID?
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        anchor!
+    }
+    func authenticate(_ url: URL) async throws -> URL {
+        guard session == nil, let window = NSApp.keyWindow ?? NSApp.mainWindow else {
+            throw PlaytraceError("请在玩迹窗口中发起登录。")
+        }
+        anchor = window
+        let requestID = UUID()
+        activeID = requestID
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+            let auth = ASWebAuthenticationSession(url: url, callbackURLScheme: Policy.authCallbackScheme) { [weak self] callback, error in
+                Task { @MainActor in
+                    guard let self, self.activeID == requestID else { return }
+                    if let callback { self.finish(.success(callback)) }
+                    else if let error = error as? ASWebAuthenticationSessionError, error.code == .canceledLogin {
+                        self.finish(.failure(PlaytraceError("已取消登录。")))
+                    } else { self.finish(.failure(PlaytraceError("暂时无法完成系统登录，请重试。"))) }
+                }
+            }
+            auth.presentationContextProvider = self
+            // Use the OS-owned private authorization window, not a normal browser tab.
+            auth.prefersEphemeralWebBrowserSession = true
+            session = auth
+            guard auth.start() else {
+                finish(.failure(PlaytraceError("无法打开系统登录窗口，请重试。")))
+                return
+            }
+            timeout = Task { [weak self] in
+                do { try await Task.sleep(nanoseconds: 300_000_000_000) } catch { return }
+                guard self?.activeID == requestID else { return }
+                self?.finish(.failure(PlaytraceError("登录已超时，请重新发起登录。")))
+            }
+        }
+    }
+    private func finish(_ result: Result<URL, Error>) {
+        guard let continuation else { return }
+        self.continuation = nil
+        activeID = nil
+        timeout?.cancel(); timeout = nil
+        let previous = session
+        session = nil
+        previous?.cancel()
+        anchor = nil
+        continuation.resume(with: result)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
     let client = APIClient(account: "desktop")
     private var signingIn = false
+    @MainActor private lazy var authentication = AppAuthentication()
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
@@ -45,16 +104,11 @@ final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
         Task { @MainActor in
             do {
                 if path == "/access/google/login" {
-                    guard !signingIn else { throw PlaytraceError("已有登录正在进行，请在浏览器完成。") }
+                    guard !signingIn else { throw PlaytraceError("已有登录正在进行，请在授权窗口完成。") }
                     signingIn = true
                     defer { signingIn = false }
-                    try await client.loginWithGoogle(client: "desktop") { code in
-                        let alert = NSAlert()
-                        alert.messageText = "使用 Google 账号登录玩迹"
-                        alert.informativeText = "本次校验码：\(code)\n请确认浏览器显示相同的校验码，再授权此 Mac App。"
-                        alert.addButton(withTitle: "打开浏览器登录")
-                        alert.addButton(withTitle: "取消")
-                        return alert.runModal() == .alertFirstButtonReturn
+                    try await client.loginWithAppSession { url in
+                        try await self.authentication.authenticate(url)
                     }
                     let response = try await client.request("/me")
                     replyHandler(["status": response.status, "body": response.data.base64EncodedString()], nil)
@@ -141,7 +195,7 @@ final class NativeAPI: NSObject, WKScriptMessageHandlerWithReply {
     @objc func newGame() { navigate("/games/new") }
     @objc func refresh() { webView.reload() }
     @objc func about() {
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "玩迹 Playtrace", .applicationVersion: "0.3.0",
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "玩迹 Playtrace", .applicationVersion: "0.4.0",
                                                     .credits: NSAttributedString(string: "记录每一次游玩。\nMac、手机与本地 CLI，共用你的云端游戏档案。")])
     }
     @objc func cliHelp() {

@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 let help = """
-玩迹 Playtrace CLI 0.3.0 — 在本机主动调用的云端档案工具
+玩迹 Playtrace CLI 0.4.0 — 在本机主动调用的云端档案工具
 
 playtrace auth login                 在系统浏览器使用 Google 账号登录，会话保存在 macOS 钥匙串
 playtrace auth status                查看当前会话
@@ -80,7 +80,7 @@ func resourceID(_ args: Arguments) throws -> String {
     static func run() async throws {
         let raw = Array(CommandLine.arguments.dropFirst())
         if raw.isEmpty || raw == ["help"] || raw == ["--help"] { print(help); return }
-        if raw == ["--version"] { print("playtrace 0.3.0"); return }
+        if raw == ["--version"] { print("playtrace 0.4.0"); return }
         let args = try Arguments(raw)
         let client = APIClient(account: "cli")
         let command = args.positional.first ?? ""

@@ -103,7 +103,7 @@ if (!process.argv.includes('--skip-dmg')) {
   cpSync('desktop/Install CLI.command', join(stage, 'Install CLI.command'));
   cpSync('desktop/CLI-Guide.html', join(stage, '先读我.html'));
   symlinkSync('/Applications', join(stage, 'Applications'));
-  const dmg = join(out, 'Playtrace-0.3.0-arm64.dmg');
+  const dmg = join(out, 'Playtrace-0.4.0-arm64.dmg');
   run('hdiutil', [
     'create',
     '-volname',
@@ -117,7 +117,7 @@ if (!process.argv.includes('--skip-dmg')) {
   ]);
   writeFileSync(
     join(out, 'SHA256SUMS.txt'),
-    ['Playtrace-0.3.0-arm64.dmg', 'playtrace']
+    ['Playtrace-0.4.0-arm64.dmg', 'playtrace']
       .map(
         (name) =>
           `${createHash('sha256')
